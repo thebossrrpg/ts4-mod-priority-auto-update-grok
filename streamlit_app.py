@@ -95,12 +95,12 @@ URL: {url}
 """
 
     response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0
-        )
+    model="models/gemini-1.5-flash",
+    contents=prompt,
+    config=types.GenerateContentConfig(
+        temperature=0
     )
+)
 
     return json.loads(response.text)
 
