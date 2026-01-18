@@ -13,8 +13,18 @@ st.title("TS4 Mod Auto-Classifier")
 url = st.text_input("Cole a URL do mod")
 
 if st.button("Analisar") and url:
-    mod_data = extract_mod_data(url)
-    result = classify_mod(mod_data)
+    try:
+        mod_data = extract_mod_data(url)
+        result = classify_mod(mod_data)
+
+        st.success(f"{result['code']} - {result['label']}")
+
+    except Exception as e:
+        st.error(
+            "❌ Não foi possível analisar esse mod.\n\n"
+            "Alguns sites (como CurseForge) bloqueiam acesso automático."
+        )
+        st.caption(str(e))
 
     st.success(f"{result['code']} - {result['label']}")
 
