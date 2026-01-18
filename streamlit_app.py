@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer
-# Version: v3.1
+# Version: v3.1-fix (logos corrigidas + footer ajustado)
 # ============================================================
 
 import streamlit as st
@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 1 (v3.1)",
+    page_title="TS4 Mod Analyzer — Phase 1",
     layout="centered"
 )
 
@@ -27,7 +27,7 @@ def fetch_page(url: str) -> str:
     try:
         response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
         if response.status_code in (403, 429):
-            return response.text  # Continua para detectar bloqueio
+            return response.text
         response.raise_for_status()
         return response.text
     except Exception as e:
@@ -48,7 +48,7 @@ def extract_identity(html: str, url: str) -> dict:
     parsed = urlparse(url)
     slug = parsed.path.strip('/').replace('-', ' ').replace('/', ' ').strip()
 
-    is_blocked = bool(re.search(r"(Just a moment|403 Forbidden|Access Denied|cloudflare)", html.lower()))
+    is_blocked = bool(re.search(r"(Just a moment|403 Forbidden|Access Denied|cloudflare|patreon login)", html.lower()))
 
     return {
         "page_title": page_title,
@@ -68,19 +68,17 @@ def normalize_identity(identity: dict) -> dict:
     )
 
     mod_name = re.sub(r'\s+', ' ', raw_name).strip()
+    # Remove duplicatas no final (ex: "Board Games Board Games" → "Board Games")
+    mod_name = re.sub(r'(\b\w+\b)(\s+\1)+$', r'\1', mod_name, flags=re.I)
     mod_name = re.sub(r'(by\s+[\w\s]+)$', '', mod_name, flags=re.I).strip()
     mod_name = mod_name.title() if mod_name.islower() else mod_name
 
-    creator = identity["og_site"]
-    if not creator or creator.lower() in ["itch.io", "curseforge.com", "patreon.com"]:
-        if "by " in raw_name.lower():
-            creator_part = re.search(r'by\s+([\w\s]+)', raw_name, re.I)
-            if creator_part:
-                creator = creator_part.group(1).strip()
-            else:
-                creator = identity["domain"]
-        else:
-            creator = identity["domain"]
+    creator = identity["og_site"] or identity["domain"]
+
+    if "by " in raw_name.lower():
+        creator_part = re.search(r'by\s+([\w\s]+)', raw_name, re.I)
+        if creator_part:
+            creator = creator_part.group(1).strip()
 
     return {
         "mod_name": mod_name or "—",
@@ -98,7 +96,6 @@ def analyze_url(url: str) -> dict:
         "identity_debug": raw
     }
 
-# Footer com créditos às ferramentas
 def add_credits_footer():
     footer_html = """
     <div style="
@@ -115,17 +112,20 @@ def add_credits_footer():
         <div style="display: flex; justify-content: center; align-items: center; gap: 1.2rem; flex-wrap: wrap;">
             <span>Com:</span>
             <a href="https://lovable.dev" target="_blank" style="text-decoration: none;">
-                <img src="https://lobehub.com/icons/lovable?type=color" alt="Lovable" style="height: 24px; vertical-align: middle;">
+                <img src="https://cdn.brandfetch.io/lovable.dev/logo" alt="Lovable" style="height: 24px; vertical-align: middle;">
             </a>
             <a href="https://chatgpt.com" target="_blank" style="text-decoration: none;">
-                <img src="https://lobehub.com/icons/openai?type=color" alt="ChatGPT" style="height: 24px; vertical-align: middle;">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/0/04/ChatGPT_logo.svg" alt="ChatGPT" style="height: 24px; vertical-align: middle;">
             </a>
             <a href="https://x.ai" target="_blank" style="text-decoration: none;">
-                <img src="https://lobehub.com/icons/grok?type=color" alt="Grok" style="height: 24px; vertical-align: middle;">
+                <img src="https://1000logos.net/wp-content/uploads/2024/05/Grok-Logo.png" alt="Grok" style="height: 24px; vertical-align: middle;">
             </a>
             <a href="https://www.notion.so" target="_blank" style="text-decoration: none;">
-                <img src="https://lobehub.com/icons/notion?type=color" alt="Notion" style="height: 24px; vertical-align: middle;">
+                <img src="https://www.notion.so/front-static/shared/notion-app-icon-3d.png" alt="Notion" style="height: 24px; vertical-align: middle;">
             </a>
+        </div>
+        <div style="margin-top: 0.8rem; font-size: 0.75rem; opacity: 0.7;">
+            v3.1-fix
         </div>
     </div>
     """
@@ -135,7 +135,7 @@ def add_credits_footer():
 # INTERFACE PRINCIPAL
 # ==============================================
 
-st.title("TS4 Mod Analyzer — Phase 1 (v3.1)")
+st.title("TS4 Mod Analyzer — Phase 1")
 
 st.markdown("""
 Cole a **URL de um mod** (itch.io, CurseForge, Patreon, etc.).  
@@ -153,9 +153,9 @@ if st.button("Analisar"):
                 result = analyze_url(url_input.strip())
 
                 if result["identity_debug"]["is_blocked"]:
-                    st.warning("⚠️ Página possivelmente bloqueada (ex: Cloudflare). Usando fallback.")
+                    st.warning("⚠️ Página bloqueada detectada (Cloudflare/Patreon). Usando apenas slug/domínio como fallback.")
                 if not result["identity_debug"]["og_title"]:
-                    st.info("ℹ️ og:title não encontrado (comum em itch.io). Usando título da página.")
+                    st.info("ℹ️ og:title não encontrado (comum em itch.io e sites pessoais). Usando título da página.")
 
                 st.success("Identidade extraída!")
 
@@ -176,5 +176,3 @@ if st.button("Analisar"):
 
 # Footer com créditos
 add_credits_footer()
-
-# O footer padrão do Streamlit aparece automaticamente abaixo
