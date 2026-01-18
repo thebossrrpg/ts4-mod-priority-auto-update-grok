@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer
-# Version: v3.1-fix (logos corrigidas + footer ajustado)
+# Version: v3.1.5 (prioriza page_title do debug quando válido)
 # ============================================================
 
 import streamlit as st
@@ -48,7 +48,9 @@ def extract_identity(html: str, url: str) -> dict:
     parsed = urlparse(url)
     slug = parsed.path.strip('/').replace('-', ' ').replace('/', ' ').strip()
 
-    is_blocked = bool(re.search(r"(Just a moment|403 Forbidden|Access Denied|cloudflare|patreon login)", html.lower()))
+    blocked_patterns = r"(just a moment|just a moment\.\.\.|403 forbidden|access denied|cloudflare|checking your browser|patreon login)"
+    is_blocked = bool(re.search(blocked_patterns, html.lower())) or \
+                 (page_title and re.search(blocked_patterns, page_title.lower()))
 
     return {
         "page_title": page_title,
@@ -59,29 +61,37 @@ def extract_identity(html: str, url: str) -> dict:
         "domain": parsed.netloc.replace("www.", "")
     }
 
+def normalize_name(raw: str) -> str:
+    if not raw:
+        return "—"
+    cleaned = re.sub(r'\s+', ' ', raw).strip()
+    cleaned = re.sub(r'(\b\w+\b)(\s+\1)+$', r'\1', cleaned, flags=re.I)  # remove duplicatas
+    cleaned = re.sub(r'(by\s+[\w\s]+)$', '', cleaned, flags=re.I).strip()
+    return cleaned.title() if cleaned.islower() else cleaned
+
 def normalize_identity(identity: dict) -> dict:
-    raw_name = (
-        identity["og_title"]
-        or identity["page_title"]
-        or identity["url_slug"]
-        or "Desconhecido"
-    )
+    # Prioridade v3.1.5: page_title (se não bloqueado) > og_title > slug
+    preferred_name = None
+    if not identity["is_blocked"] and identity["page_title"] and "just a moment" not in identity["page_title"].lower():
+        preferred_name = identity["page_title"]
+    elif identity["og_title"]:
+        preferred_name = identity["og_title"]
+    else:
+        preferred_name = identity["url_slug"]
 
-    mod_name = re.sub(r'\s+', ' ', raw_name).strip()
-    # Remove duplicatas no final (ex: "Board Games Board Games" → "Board Games")
-    mod_name = re.sub(r'(\b\w+\b)(\s+\1)+$', r'\1', mod_name, flags=re.I)
-    mod_name = re.sub(r'(by\s+[\w\s]+)$', '', mod_name, flags=re.I).strip()
-    mod_name = mod_name.title() if mod_name.islower() else mod_name
+    mod_name = normalize_name(preferred_name or "Desconhecido")
 
-    creator = identity["og_site"] or identity["domain"]
+    # Criador: og_site > domain > extração de "by " se disponível
+    creator_raw = identity["og_site"] or identity["domain"]
+    creator = normalize_name(creator_raw)
 
-    if "by " in raw_name.lower():
-        creator_part = re.search(r'by\s+([\w\s]+)', raw_name, re.I)
+    if "by " in preferred_name.lower():
+        creator_part = re.search(r'by\s+([\w\s]+)', preferred_name, re.I)
         if creator_part:
-            creator = creator_part.group(1).strip()
+            creator = normalize_name(creator_part.group(1).strip())
 
     return {
-        "mod_name": mod_name or "—",
+        "mod_name": mod_name,
         "creator": creator or "—"
     }
 
@@ -100,32 +110,32 @@ def add_credits_footer():
     footer_html = """
     <div style="
         text-align: center;
-        padding: 1.2rem 0;
-        font-size: 0.85rem;
+        padding: 1.5rem 0 1rem;
+        font-size: 0.9rem;
         color: #6b7280;
-        margin-top: 1.5rem;
+        margin-top: 2rem;
         border-top: 1px solid #e5e7eb;
     ">
-        <div style="margin-bottom: 0.6rem; font-weight: 500;">
+        <div style="margin-bottom: 0.8rem; font-weight: bold; font-size: 1rem;">
             Criado por Akin (@UnpaidSimmer)
         </div>
-        <div style="display: flex; justify-content: center; align-items: center; gap: 1.2rem; flex-wrap: wrap;">
-            <span>Com:</span>
+        <div style="display: flex; justify-content: center; align-items: center; gap: 1.5rem; flex-wrap: wrap;">
+            <span style="font-size: 0.85rem;">Com:</span>
             <a href="https://lovable.dev" target="_blank" style="text-decoration: none;">
-                <img src="https://cdn.brandfetch.io/lovable.dev/logo" alt="Lovable" style="height: 24px; vertical-align: middle;">
+                <img src="https://cdn.brandfetch.io/lovable.dev/logo" alt="Lovable" style="height: 20px; max-width: 80px; vertical-align: middle;">
             </a>
             <a href="https://chatgpt.com" target="_blank" style="text-decoration: none;">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/0/04/ChatGPT_logo.svg" alt="ChatGPT" style="height: 24px; vertical-align: middle;">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/0/04/ChatGPT_logo.svg" alt="ChatGPT" style="height: 20px; max-width: 80px; vertical-align: middle;">
             </a>
             <a href="https://x.ai" target="_blank" style="text-decoration: none;">
-                <img src="https://1000logos.net/wp-content/uploads/2024/05/Grok-Logo.png" alt="Grok" style="height: 24px; vertical-align: middle;">
+                <img src="https://1000logos.net/wp-content/uploads/2024/05/Grok-Logo.png" alt="Grok" style="height: 20px; max-width: 80px; vertical-align: middle;">
             </a>
             <a href="https://www.notion.so" target="_blank" style="text-decoration: none;">
-                <img src="https://www.notion.so/front-static/shared/notion-app-icon-3d.png" alt="Notion" style="height: 24px; vertical-align: middle;">
+                <img src="https://www.notion.so/front-static/shared/notion-app-icon-3d.png" alt="Notion" style="height: 20px; max-width: 80px; vertical-align: middle;">
             </a>
         </div>
         <div style="margin-top: 0.8rem; font-size: 0.75rem; opacity: 0.7;">
-            v3.1-fix
+            v3.1.5
         </div>
     </div>
     """
@@ -153,9 +163,9 @@ if st.button("Analisar"):
                 result = analyze_url(url_input.strip())
 
                 if result["identity_debug"]["is_blocked"]:
-                    st.warning("⚠️ Página bloqueada detectada (Cloudflare/Patreon). Usando apenas slug/domínio como fallback.")
+                    st.warning("⚠️ Bloqueio detectado (Cloudflare ou similar). Usando fallback do slug/domínio.")
                 if not result["identity_debug"]["og_title"]:
-                    st.info("ℹ️ og:title não encontrado (comum em itch.io e sites pessoais). Usando título da página.")
+                    st.info("ℹ️ og:title não encontrado. Usando título da página ou slug.")
 
                 st.success("Identidade extraída!")
 
@@ -168,11 +178,10 @@ if st.button("Analisar"):
                     st.subheader("👤 Criador")
                     st.write(result["creator"])
 
-                with st.expander("🔍 Debug técnico"):
+                with st.expander("🔍 Debug técnico (fonte completa)"):
                     st.json(result["identity_debug"])
 
             except Exception as e:
                 st.error(f"Erro: {str(e)}")
 
-# Footer com créditos
 add_credits_footer()
