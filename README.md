@@ -218,6 +218,12 @@ Não é um produto genérico.
 
 * * *
 
+⚠️ Este projeto é governado pelo arquivo
+[MODELO_CANONICO_TS4_MOD_AUTO_CLASSIFIER.md].
+Qualquer código deve obedecer a esse modelo.
+
+* * *
+
 ## ✍️ Autor
 
 **Criado por Akin (@UnpaidSimmer), com Lovable.**
