@@ -165,28 +165,22 @@ st.markdown(
 url_input = st.text_input("URL do mod")
 
 if st.button("Analisar"):
-    if not url_input:
-        st.error("Por favor, insira uma URL.")
-    else:
-        with st.spinner("Lendo a página e analisando..."):
-            try:
-                result = phase1_analyze_url(url_input)
+    try:
+        raw_html = fetch_page(url)
 
-                st.success("Análise concluída (Fase 1)")
+        # segue o fluxo normal
+        raw_text = extract_text(raw_html)
+        result = analyze_with_gemini(raw_text, url)
 
-                st.subheader("Resultado estruturado")
-                st.json({
-                    "source": result["source"],
-                    "url": result["url"],
-                    "mod_name": result["mod_name"],
-                    "creator": result["creator"],
-                    "functional_summary": result["functional_summary"],
-                    "confidence": result["confidence"],
-                    "notes": result["notes"]
-                })
+        st.success("Análise concluída")
+        st.json(result)
 
-                with st.expander("Texto bruto extraído (raw_text)"):
-                    st.text(result["raw_text"][:5000])
+    except PermissionError:
+        st.warning(
+            "A fonte bloqueia leitura automática. "
+            "Isso é comum no CurseForge. "
+            "Tente uma página Patreon ou site do criador."
+        )
 
-            except Exception as e:
-                st.error(f"Erro durante a análise: {e}")
+    except Exception as e:
+        st.error(f"Erro inesperado: {e}")
