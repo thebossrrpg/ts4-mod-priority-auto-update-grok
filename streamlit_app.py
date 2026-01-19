@@ -1,8 +1,7 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 2 (Sandbox)
-# Version: v3.6.1
-# Fase 1 restaurada como tolerante (ironclad)
-# Fase 2 com lookup real no Notion (até 3 links)
+# Version: v3.6.2
+# Ironclad end-to-end (nenhum HTTPError derruba o app)
 # ============================================================
 
 import streamlit as st
@@ -22,7 +21,7 @@ st.set_page_config(
 )
 
 # =========================
-# CONFIG EXTERNA
+# CONFIG GERAL
 # =========================
 
 REQUEST_HEADERS = {
@@ -55,7 +54,7 @@ NOTION_HEADERS = {
 }
 
 # =========================
-# HELPERS (Fase 1)
+# HELPERS — FASE 1
 # =========================
 
 def clean_text(text: str) -> str:
@@ -73,8 +72,7 @@ def tokenize(text: str) -> list[str]:
 def fetch_page(url: str) -> str:
     """
     Fase 1 ironclad:
-    - nunca levanta exceção
-    - erro HTTP vira HTML vazio
+    erro HTTP nunca quebra o app
     """
     try:
         r = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
@@ -83,7 +81,7 @@ def fetch_page(url: str) -> str:
         return ""
 
 # =========================
-# IDENTIDADE — FASE 1 (INALTERADA EM CONCEITO)
+# IDENTIDADE — FASE 1 (ORIGINAL)
 # =========================
 
 def extract_identity(html: str, url: str) -> dict:
@@ -125,14 +123,14 @@ def extract_identity(html: str, url: str) -> dict:
     }
 
 # =========================
-# NOTION LOOKUP — FASE 2
+# NOTION LOOKUP — FASE 2 (IRONCLAD)
 # =========================
 
 def query_notion(identity: dict, limit: int = 3) -> list[dict]:
     """
     Lookup real no Notion.
-    Retorna ATÉ 3 candidatos com hyperlink.
-    Nenhuma decisão é tomada aqui.
+    Nunca levanta exceção.
+    Retorna até 3 candidatos ou lista vazia.
     """
 
     tokens = tokenize(identity["mod_name"]) + tokenize(identity["url_slug"])
@@ -156,14 +154,22 @@ def query_notion(identity: dict, limit: int = 3) -> list[dict]:
         }
     }
 
-    r = requests.post(url, headers=NOTION_HEADERS, json=payload, timeout=20)
-    r.raise_for_status()
+    try:
+        r = requests.post(
+            url,
+            headers=NOTION_HEADERS,
+            json=payload,
+            timeout=20
+        )
+        data = r.json()
+    except Exception:
+        return []
 
-    pages = r.json().get("results", [])
+    pages = data.get("results", [])
     candidates = []
 
     for page in pages[:limit]:
-        props = page["properties"]
+        props = page.get("properties", {})
 
         title = "(sem título)"
         if props.get("Name", {}).get("title"):
@@ -176,7 +182,7 @@ def query_notion(identity: dict, limit: int = 3) -> list[dict]:
             "title": title,
             "category": category.get("name") if category else None,
             "priority": priority.get("name") if priority else None,
-            "url": page["url"],
+            "url": page.get("url"),
             "reason": "Match por nome / domínio"
         })
 
@@ -206,7 +212,7 @@ def phase2(identity: dict) -> dict:
 # =========================
 
 st.title("🧪 Fase 2 (Sandbox): verificação no Notion")
-st.caption("⚠️ Read-only · mostra até 3 possibilidades · sem decisão automática")
+st.caption("⚠️ Read-only · até 3 possibilidades · sem decisão automática")
 
 url = st.text_input("URL do mod")
 
@@ -222,7 +228,7 @@ if st.button("Analisar") and url.strip():
     st.write(f"**Domínio:** {identity['domain']}")
 
     if identity["is_blocked"]:
-        st.warning("⚠️ Página bloqueou leitura automática. Identidade baseada em URL.")
+        st.warning("⚠️ Página bloqueou leitura automática. Identidade baseada na URL.")
 
     st.subheader("🔎 Resultado da Fase 2")
     st.write("**Status:**", phase2_result["status"])
@@ -246,13 +252,19 @@ if st.button("Analisar") and url.strip():
         })
 
 # =========================
-# FOOTER
+# FOOTER (RESTAURADO)
 # =========================
 
 st.markdown(
     """
     <div style="text-align: center; padding: 1rem 0; font-size: 0.9rem; color: #6b7280;">
-        Criado por Akin (@UnpaidSimmer) · v3.6.1 · Sandbox
+        <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png" 
+             alt="Favicon" 
+             style="height: 20px; vertical-align: middle; margin-right: 8px;">
+        Criado por Akin (@UnpaidSimmer) · v3.6.2 · Sandbox
+        <div style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6;">
+            v3.5 lineage
+        </div>
     </div>
     """,
     unsafe_allow_html=True
