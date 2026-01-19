@@ -1,7 +1,8 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 2 (Sandbox)
-# Version: v3.6
-# Lookup real no Notion · até 3 possibilidades · sem IA
+# Version: v3.6.1
+# Fase 1 restaurada como tolerante (ironclad)
+# Fase 2 com lookup real no Notion (até 3 links)
 # ============================================================
 
 import streamlit as st
@@ -32,6 +33,15 @@ REQUEST_HEADERS = {
     )
 }
 
+STOPWORDS = {
+    "mod", "mods", "post", "posts", "v", "v1", "v2", "version",
+    "the", "and", "or", "for", "with", "by"
+}
+
+# =========================
+# NOTION CONFIG
+# =========================
+
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
@@ -44,13 +54,8 @@ NOTION_HEADERS = {
     "Content-Type": "application/json",
 }
 
-STOPWORDS = {
-    "mod", "mods", "post", "posts", "v", "v1", "v2", "version",
-    "the", "and", "or", "for", "with", "by"
-}
-
 # =========================
-# HELPERS
+# HELPERS (Fase 1)
 # =========================
 
 def clean_text(text: str) -> str:
@@ -66,15 +71,34 @@ def tokenize(text: str) -> list[str]:
     ]
 
 def fetch_page(url: str) -> str:
-    r = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
-    r.raise_for_status()
-    return r.text
+    """
+    Fase 1 ironclad:
+    - nunca levanta exceção
+    - erro HTTP vira HTML vazio
+    """
+    try:
+        r = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
+        return r.text
+    except requests.exceptions.RequestException:
+        return ""
 
 # =========================
-# IDENTIDADE — FASE 1 (inalterada)
+# IDENTIDADE — FASE 1 (INALTERADA EM CONCEITO)
 # =========================
 
 def extract_identity(html: str, url: str) -> dict:
+    parsed = urlparse(url)
+    slug = parsed.path.replace("-", " ").replace("/", " ")
+
+    if not html:
+        return {
+            "mod_name": slug,
+            "creator": parsed.netloc.replace("www.", ""),
+            "url_slug": slug,
+            "domain": parsed.netloc.replace("www.", ""),
+            "is_blocked": True
+        }
+
     soup = BeautifulSoup(html, "html.parser")
 
     page_title = soup.title.string.strip() if soup.title else None
@@ -86,9 +110,6 @@ def extract_identity(html: str, url: str) -> dict:
             og_title = meta.get("content")
         if meta.get("property") == "og:site_name":
             og_site = meta.get("content")
-
-    parsed = urlparse(url)
-    slug = parsed.path.replace("-", " ").replace("/", " ")
 
     blocked = bool(
         page_title
@@ -109,13 +130,13 @@ def extract_identity(html: str, url: str) -> dict:
 
 def query_notion(identity: dict, limit: int = 3) -> list[dict]:
     """
-    Busca real no Notion.
-    Retorna ATÉ 3 candidatos plausíveis com hyperlink.
-    NÃO decide nada.
+    Lookup real no Notion.
+    Retorna ATÉ 3 candidatos com hyperlink.
+    Nenhuma decisão é tomada aqui.
     """
 
-    search_terms = tokenize(identity["mod_name"]) + tokenize(identity["url_slug"])
-    search_text = " ".join(search_terms[:5])
+    tokens = tokenize(identity["mod_name"]) + tokenize(identity["url_slug"])
+    search_text = " ".join(tokens[:5])
 
     url = f"{NOTION_API_URL}/databases/{NOTION_DATABASE_ID}/query"
 
@@ -155,7 +176,7 @@ def query_notion(identity: dict, limit: int = 3) -> list[dict]:
             "title": title,
             "category": category.get("name") if category else None,
             "priority": priority.get("name") if priority else None,
-            "url": page["url"],  # 🔗 hyperlink real
+            "url": page["url"],
             "reason": "Match por nome / domínio"
         })
 
@@ -200,6 +221,9 @@ if st.button("Analisar") and url.strip():
     st.write(f"**Criador:** {identity['creator']}")
     st.write(f"**Domínio:** {identity['domain']}")
 
+    if identity["is_blocked"]:
+        st.warning("⚠️ Página bloqueou leitura automática. Identidade baseada em URL.")
+
     st.subheader("🔎 Resultado da Fase 2")
     st.write("**Status:**", phase2_result["status"])
     st.write("**Candidatos encontrados:**", phase2_result["candidates_found"])
@@ -228,7 +252,7 @@ if st.button("Analisar") and url.strip():
 st.markdown(
     """
     <div style="text-align: center; padding: 1rem 0; font-size: 0.9rem; color: #6b7280;">
-        Criado por Akin (@UnpaidSimmer) · v3.6 · Sandbox
+        Criado por Akin (@UnpaidSimmer) · v3.6.1 · Sandbox
     </div>
     """,
     unsafe_allow_html=True
