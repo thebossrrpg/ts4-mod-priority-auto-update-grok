@@ -1,6 +1,7 @@
 # ============================================================
-# TS4 Mod Analyzer
-# Version: v3.2.3 (fix ATS4 crash + debug funcional)
+# TS4 Mod Analyzer — Phase 1
+# Version: v3.3
+# Focus: Patreon / CurseForge block handling (NO LLM)
 # ============================================================
 
 import streamlit as st
@@ -9,46 +10,50 @@ import re
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
-# --------------------
-# SESSION STATE
-# --------------------
-if "analysis_result" not in st.session_state:
-    st.session_state.analysis_result = None
+# -------------------------
+# PAGE CONFIG
+# -------------------------
 
 st.set_page_config(
     page_title="TS4 Mod Analyzer — Phase 1",
     layout="centered"
 )
 
+# -------------------------
+# CONSTANTS
+# -------------------------
+
 REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# --------------------
-# FETCH
-# --------------------
-def fetch_page(url: str) -> str:
-    try:
-        response = requests.get(url, headers=REQUEST_HEADERS, timeout=25)
-        return response.text or ""
-    except Exception as e:
-        return ""
+BLOCK_PATTERNS = re.compile(
+    r"(just a moment|checking your browser|cloudflare|access denied|"
+    r"403 forbidden|patreon is powering|become a patron|enable javascript)",
+    re.I
+)
 
-# --------------------
-# EXTRACTION
-# --------------------
+# -------------------------
+# FETCH
+# -------------------------
+
+def fetch_page(url: str) -> str:
+    response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
+    return response.text or ""
+
+# -------------------------
+# IDENTITY EXTRACTION
+# -------------------------
+
 def extract_identity(html: str, url: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
 
-    page_title = (
-        soup.title.get_text(strip=True)
-        if soup.title
-        else None
-    )
+    page_title = soup.title.string.strip() if soup.title else None
 
     og_title = None
     og_site = None
@@ -61,95 +66,117 @@ def extract_identity(html: str, url: str) -> dict:
     parsed = urlparse(url)
     slug = parsed.path.strip("/").replace("-", " ").replace("/", " ").strip()
 
-    blocked_patterns = r"(just a moment|cloudflare|access denied|checking your browser|patreon login)"
     is_blocked = bool(
-        re.search(blocked_patterns, html.lower())
-        or (page_title and re.search(blocked_patterns, page_title.lower()))
+        BLOCK_PATTERNS.search(html.lower()) or
+        (page_title and BLOCK_PATTERNS.search(page_title.lower()))
     )
 
     return {
         "page_title": page_title,
         "og_title": og_title,
         "og_site": og_site,
-        "url_slug": slug,
+        "slug": slug,
+        "domain": parsed.netloc.replace("www.", ""),
         "is_blocked": is_blocked,
-        "domain": parsed.netloc.replace("www.", "")
     }
 
-# --------------------
+# -------------------------
 # NORMALIZATION
-# --------------------
-def normalize_identity(identity: dict) -> dict:
-    raw_name = (
-        identity["page_title"]
-        or identity["og_title"]
-        or identity["url_slug"]
-        or "Desconhecido"
-    )
+# -------------------------
 
-    mod_name = re.sub(r"\s+", " ", raw_name).strip()
+def clean_name(text: str | None) -> str | None:
+    if not text:
+        return None
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(by\s+.+)$", "", text, flags=re.I).strip()
+    return text
 
-    creator = identity["og_site"] or identity["domain"]
+def choose_mod_name(identity: dict) -> str:
+    """
+    RULES (v3.3):
+    - If NOT blocked:
+        1. og:title
+        2. page <title>
+    - If blocked:
+        3. slug
+    """
+    if not identity["is_blocked"]:
+        if identity["og_title"]:
+            return clean_name(identity["og_title"])
+        if identity["page_title"]:
+            return clean_name(identity["page_title"])
 
-    return {
-        "mod_name": mod_name,
-        "creator": creator or "—"
-    }
+    # blocked fallback
+    return identity["slug"] or "Unknown mod"
 
-# --------------------
-# ANALYSIS
-# --------------------
+def choose_creator(identity: dict) -> str:
+    return identity["og_site"] or identity["domain"] or "—"
+
+# -------------------------
+# ORCHESTRATOR
+# -------------------------
+
 def analyze_url(url: str) -> dict:
     html = fetch_page(url)
-    raw = extract_identity(html, url)
-    norm = normalize_identity(raw)
+    identity = extract_identity(html, url)
 
     return {
         "url": url,
-        "mod_name": norm["mod_name"],
-        "creator": norm["creator"],
-        "debug": raw
+        "mod_name": choose_mod_name(identity),
+        "creator": choose_creator(identity),
+        "identity_debug": identity,
     }
 
-# ====================
+# -------------------------
 # UI
-# ====================
+# -------------------------
+
 st.title("TS4 Mod Analyzer — Phase 1")
 
 st.markdown(
-    "Cole a **URL de um mod** (CurseForge, Patreon, ATS4 etc). "
-    "O app extrai identidade para evitar duplicatas no Notion."
+    "Cole a **URL de um mod**.  \n"
+    "Esta fase extrai **identidade básica** para evitar duplicatas.  \n"
+    "**Não usa LLM.**"
 )
 
-url_input = st.text_input("URL do mod")
+url_input = st.text_input(
+    "URL do mod",
+    placeholder="https://www.patreon.com/..."
+)
 
 if st.button("Analisar"):
     if not url_input.strip():
         st.warning("Cole uma URL válida.")
     else:
-        with st.spinner("Analisando..."):
-            st.session_state.analysis_result = analyze_url(url_input.strip())
+        with st.spinner("Analisando…"):
+            try:
+                result = analyze_url(url_input.strip())
 
-# --------------------
-# RESULT
-# --------------------
-result = st.session_state.analysis_result
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("📦 Mod")
+                    st.write(result["mod_name"])
+                with col2:
+                    st.subheader("👤 Criador")
+                    st.write(result["creator"])
 
-if result:
-    col1, col2 = st.columns(2)
+                if result["identity_debug"]["is_blocked"]:
+                    st.warning(
+                        "⚠️ Bloqueio detectado (Patreon / CurseForge / Cloudflare). "
+                        "Usando slug da URL como fallback."
+                    )
 
-    with col1:
-        st.subheader("📦 Mod")
-        st.write(result["mod_name"])
+                with st.expander("🔍 Debug técnico (Phase 1)", expanded=False):
+                    st.json(result["identity_debug"])
 
-    with col2:
-        st.subheader("👤 Criador")
-        st.write(result["creator"])
+                st.success("Identidade extraída.")
 
-    st.success("Identidade extraída com sucesso.")
+            except Exception as e:
+                st.error(f"Erro inesperado: {e}")
 
-    with st.expander("🔍 Debug técnico"):
-        st.json(result["debug"])
-
-    if result["debug"]["is_blocked"]:
-        st.warning("⚠️ Bloqueio detectado (Cloudflare / Patreon). Fallback aplicado.")
+st.markdown(
+    "<div style='text-align:center; opacity:0.6; margin-top:2rem;'>"
+    "TS4 Mod Analyzer — v3.3"
+    "</div>",
+    unsafe_allow_html=True
+)
