@@ -201,5 +201,10 @@ st.markdown(
              alt="Favicon" 
              style="height: 20px; vertical-align: middle; margin-right: 8px;">
         Criado por Akin (@UnpaidSimmer)
+        <div style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6;">
+            v3.3
+        </div>
     </div>
     """,
+    unsafe_allow_html=True
+)
