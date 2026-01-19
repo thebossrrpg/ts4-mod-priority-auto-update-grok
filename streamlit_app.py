@@ -1,6 +1,7 @@
 # ============================================================
-# TS4 Mod Analyzer — Phase 1
-# Version: v3.3 (UI/state fix, debug consistente)
+# TS4 Mod Analyzer — Phase 2 Sandbox
+# Version: v3.4
+# Purpose: Duplicate detection (NO Notion writes)
 # ============================================================
 
 import streamlit as st
@@ -10,18 +11,21 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 # =========================
-# SESSION STATE INIT
+# SESSION STATE
 # =========================
 
 if "analysis_result" not in st.session_state:
     st.session_state.analysis_result = None
+
+if "duplication_result" not in st.session_state:
+    st.session_state.duplication_result = None
 
 # =========================
 # CONFIG
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 1",
+    page_title="TS4 Mod Analyzer — v3.4",
     layout="centered"
 )
 
@@ -30,9 +34,18 @@ REQUEST_HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    )
 }
+
+# =========================
+# MOCK NOTION DATABASE
+# =========================
+
+MOCK_NOTION_DB = [
+    {"mod_name": "Mini Fixes", "creator": "Kuttoe"},
+    {"mod_name": "Small Bug Fixes", "creator": "LittleMsSam"},
+    {"mod_name": "Automatic Beard Shadows", "creator": "Someone"},
+]
 
 # =========================
 # FETCH
@@ -46,7 +59,7 @@ def fetch_page(url: str) -> str:
     return response.text
 
 # =========================
-# EXTRAÇÃO DE IDENTIDADE
+# PHASE 1 — IDENTITY
 # =========================
 
 def extract_identity(html: str, url: str) -> dict:
@@ -84,115 +97,148 @@ def extract_identity(html: str, url: str) -> dict:
         "domain": parsed.netloc.replace("www.", ""),
     }
 
-# =========================
-# NORMALIZAÇÃO
-# =========================
-
 def normalize_name(raw: str) -> str:
     if not raw:
         return "—"
     cleaned = re.sub(r"\s+", " ", raw).strip()
-    cleaned = re.sub(r"(\b\w+\b)(\s+\1)+$", r"\1", cleaned, flags=re.I)
     cleaned = re.sub(r"(by\s+[\w\s]+)$", "", cleaned, flags=re.I).strip()
     return cleaned.title() if cleaned.islower() else cleaned
 
 def normalize_identity(identity: dict) -> dict:
-    preferred_name = None
-
-    if (
-        not identity["is_blocked"]
-        and identity["page_title"]
-        and "just a moment" not in identity["page_title"].lower()
-    ):
-        preferred_name = identity["page_title"]
+    if not identity["is_blocked"] and identity["page_title"]:
+        preferred = identity["page_title"]
     elif identity["og_title"]:
-        preferred_name = identity["og_title"]
+        preferred = identity["og_title"]
     else:
-        preferred_name = identity["url_slug"]
+        preferred = identity["url_slug"]
 
-    mod_name = normalize_name(preferred_name)
-
+    mod_name = normalize_name(preferred)
     creator = identity["og_site"] or identity["domain"]
-
-    if preferred_name and "by " in preferred_name.lower():
-        m = re.search(r"by\s+([\w\s]+)", preferred_name, re.I)
-        if m:
-            creator = normalize_name(m.group(1))
 
     return {
         "mod_name": mod_name,
         "creator": creator or "—",
     }
 
-# =========================
-# ORQUESTRADOR
-# =========================
-
 def analyze_url(url: str) -> dict:
     html = fetch_page(url)
-    identity_raw = extract_identity(html, url)
-    identity_norm = normalize_identity(identity_raw)
+    raw = extract_identity(html, url)
+    norm = normalize_identity(raw)
 
     return {
         "url": url,
-        "mod_name": identity_norm["mod_name"],
-        "creator": identity_norm["creator"],
-        "identity_debug": identity_raw,
+        "mod_name": norm["mod_name"],
+        "creator": norm["creator"],
+        "identity_debug": raw,
+    }
+
+# =========================
+# PHASE 2 — DUPLICATE SCORE
+# =========================
+
+def similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    a_words = set(a.lower().split())
+    b_words = set(b.lower().split())
+    common = a_words & b_words
+    return len(common) / max(len(a_words), 1)
+
+def compute_match(candidate, existing):
+    score = 0.0
+    reasons = []
+
+    name_score = similarity(candidate["mod_name"], existing["mod_name"])
+    if name_score > 0:
+        score += name_score * 0.4
+        reasons.append(f"Nome parecido ({name_score:.2f})")
+
+    if candidate["creator"] == existing["creator"]:
+        score += 0.2
+        reasons.append("Mesmo criador")
+
+    return round(score, 2), reasons
+
+def detect_duplicate(candidate):
+    best = None
+    best_score = 0
+    best_reasons = []
+
+    for entry in MOCK_NOTION_DB:
+        score, reasons = compute_match(candidate, entry)
+        if score > best_score:
+            best = entry
+            best_score = score
+            best_reasons = reasons
+
+    return {
+        "best_score": best_score,
+        "best_match": best,
+        "reasons": best_reasons,
     }
 
 # =========================
 # UI
 # =========================
 
-st.title("TS4 Mod Analyzer")
+st.title("TS4 Mod Analyzer — v3.4")
 st.markdown(
-    "Cole a **URL de um mod**.  \n"
-    "Extrai identidade básica para evitar duplicatas no Notion."
+    "Fase 2 (Sandbox): **detecção de duplicatas**  \n"
+    "⚠️ Não escreve no Notion."
 )
 
-url_input = st.text_input(
-    "URL do mod",
-    placeholder="Cole aqui a URL completa do mod"
-)
-
-# -------- AÇÃO --------
+url_input = st.text_input("URL do mod")
 
 if st.button("Analisar"):
     if not url_input.strip():
         st.warning("Cole uma URL válida.")
     else:
         with st.spinner("Analisando..."):
-            st.session_state.analysis_result = analyze_url(url_input.strip())
+            result = analyze_url(url_input.strip())
+            st.session_state.analysis_result = result
+            st.session_state.duplication_result = detect_duplicate(result)
 
-# -------- RENDER PERSISTENTE --------
+# =========================
+# RENDER
+# =========================
 
-result = st.session_state.analysis_result
+if st.session_state.analysis_result:
+    r = st.session_state.analysis_result
+    d = st.session_state.duplication_result
 
-if result:
-    col1, col2 = st.columns(2)
+    st.subheader("📦 Identidade")
+    st.write("**Mod:**", r["mod_name"])
+    st.write("**Criador:**", r["creator"])
 
-    with col1:
-        st.subheader("📦 Mod")
-        st.write(result["mod_name"])
+    st.subheader("🔎 Verificação de duplicata")
 
-    with col2:
-        st.subheader("👤 Criador")
-        st.write(result["creator"])
+    if d["best_score"] >= 0.5:
+        st.error("⚠️ Alta chance de duplicata")
+    elif d["best_score"] >= 0.25:
+        st.warning("⚠️ Possível duplicata")
+    else:
+        st.success("✅ Provavelmente novo mod")
 
-    st.success("Identidade extraída com sucesso.")
+    st.write("**Score:**", d["best_score"])
 
-    with st.expander("🔍 Debug técnico"):
-        st.json(result["identity_debug"])
-
-    if result["identity_debug"]["is_blocked"]:
-        st.warning(
-            "⚠️ Bloqueio detectado (Cloudflare / Patreon). "
-            "Fallback aplicado (slug/domínio)."
+    if d["best_match"]:
+        st.write(
+            f"**Possível match:** {d['best_match']['mod_name']} — "
+            f"{d['best_match']['creator']}"
         )
+
+    if d["reasons"]:
+        st.write("**Razões:**")
+        for r in d["reasons"]:
+            st.write("-", r)
+
+    with st.expander("🔍 Debug Fase 1"):
+        st.json(r["identity_debug"])
 
 # =========================
 # FOOTER
 # =========================
+
 
 st.markdown(
     """
@@ -200,7 +246,7 @@ st.markdown(
         <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png" 
              alt="Favicon" 
              style="height: 20px; vertical-align: middle; margin-right: 8px;">
-        Criado por Akin (@UnpaidSimmer)
+        Criado por Akin (@UnpaidSimmer) · v3.4 · Sandbox
         <div style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6;">
             v3.3
         </div>
