@@ -1,23 +1,28 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 2 (Sandbox)
-# Version: v3.5
-# Score cruzado por nome + URL + domínio (sem IA)
+# Version: v3.6
+# Lookup real no Notion · até 3 possibilidades · sem IA
 # ============================================================
 
 import streamlit as st
 import requests
 import re
+import os
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 # =========================
-# CONFIG
+# CONFIG STREAMLIT
 # =========================
 
 st.set_page_config(
     page_title="TS4 Mod Analyzer — Phase 2 (Sandbox)",
     layout="centered"
 )
+
+# =========================
+# CONFIG EXTERNA
+# =========================
 
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -27,20 +32,22 @@ REQUEST_HEADERS = {
     )
 }
 
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+NOTION_API_URL = "https://api.notion.com/v1"
+NOTION_VERSION = "2022-06-28"
+
+NOTION_HEADERS = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Notion-Version": NOTION_VERSION,
+    "Content-Type": "application/json",
+}
+
 STOPWORDS = {
     "mod", "mods", "post", "posts", "v", "v1", "v2", "version",
     "the", "and", "or", "for", "with", "by"
 }
-
-# =========================
-# MOCK NOTION DATA (sandbox)
-# =========================
-
-NOTION_MODS = [
-    "LGBTQIA+ / Gender & Orientation Overhaul",
-    "Mini-mods: Tweaks & Changes",
-    "Automatic Beard Shadows"
-]
 
 # =========================
 # HELPERS
@@ -53,18 +60,18 @@ def clean_text(text: str) -> str:
     return text
 
 def tokenize(text: str) -> list[str]:
-    tokens = clean_text(text).split()
     return [
-        t for t in tokens
+        t for t in clean_text(text).split()
         if t not in STOPWORDS and len(t) > 2
     ]
 
 def fetch_page(url: str) -> str:
     r = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
+    r.raise_for_status()
     return r.text
 
 # =========================
-# IDENTIDADE (Fase 1 reaproveitada)
+# IDENTIDADE — FASE 1 (inalterada)
 # =========================
 
 def extract_identity(html: str, url: str) -> dict:
@@ -97,76 +104,88 @@ def extract_identity(html: str, url: str) -> dict:
     }
 
 # =========================
-# SCORE CRUZADO POR EIXOS
+# NOTION LOOKUP — FASE 2
 # =========================
 
-def score_against_notion(identity: dict) -> dict:
-    slug_tokens = tokenize(identity["url_slug"])
-    name_tokens = tokenize(identity["mod_name"])
+def query_notion(identity: dict, limit: int = 3) -> list[dict]:
+    """
+    Busca real no Notion.
+    Retorna ATÉ 3 candidatos plausíveis com hyperlink.
+    NÃO decide nada.
+    """
 
-    all_input_tokens = set(slug_tokens + name_tokens)
+    search_terms = tokenize(identity["mod_name"]) + tokenize(identity["url_slug"])
+    search_text = " ".join(search_terms[:5])
 
-    results = []
+    url = f"{NOTION_API_URL}/databases/{NOTION_DATABASE_ID}/query"
 
-    for notion_name in NOTION_MODS:
-        notion_tokens = tokenize(notion_name)
+    payload = {
+        "page_size": 10,
+        "filter": {
+            "or": [
+                {
+                    "property": "Name",
+                    "title": {"contains": search_text}
+                },
+                {
+                    "property": "Source URL",
+                    "url": {"contains": identity["domain"]}
+                }
+            ]
+        }
+    }
 
-        common = set(notion_tokens) & all_input_tokens
+    r = requests.post(url, headers=NOTION_HEADERS, json=payload, timeout=20)
+    r.raise_for_status()
 
-        score = 0.0
-        reasons = []
+    pages = r.json().get("results", [])
+    candidates = []
 
-        # EIXO 1 — Token semântico direto
-        if common:
-            score += 0.30 + 0.05 * len(common)
-            reasons.append(f"tokens em comum: {sorted(common)}")
+    for page in pages[:limit]:
+        props = page["properties"]
 
-        # EIXO 2 — Token raro (ex: lgbtqia)
-        rare_tokens = [
-            t for t in common
-            if len(t) >= 6 or "+" in t
-        ]
-        if rare_tokens:
-            score += 0.20
-            reasons.append(f"tokens raros: {rare_tokens}")
+        title = "(sem título)"
+        if props.get("Name", {}).get("title"):
+            title = props["Name"]["title"][0]["plain_text"]
 
-        # EIXO 3 — URL confirma tema
-        if any(t in slug_tokens for t in notion_tokens):
-            score += 0.15
-            reasons.append("URL confirma tema")
+        category = props.get("Category", {}).get("select", {})
+        priority = props.get("Priority", {}).get("select", {})
 
-        # EIXO 4 — Penalidade por ruído
-        noise = [t for t in slug_tokens if t.isdigit()]
-        if noise:
-            score -= 0.05
-
-        score = round(min(score, 1.0), 2)
-
-        results.append({
-            "notion_name": notion_name,
-            "score": score,
-            "debug": {
-                "slug_tokens": slug_tokens,
-                "name_tokens": name_tokens,
-                "notion_tokens": notion_tokens,
-                "common_tokens": list(common),
-                "reasons": reasons
-            }
+        candidates.append({
+            "title": title,
+            "category": category.get("name") if category else None,
+            "priority": priority.get("name") if priority else None,
+            "url": page["url"],  # 🔗 hyperlink real
+            "reason": "Match por nome / domínio"
         })
 
-    best = max(results, key=lambda r: r["score"])
+    return candidates
+
+def phase2(identity: dict) -> dict:
+    candidates = query_notion(identity)
+    count = len(candidates)
+
+    if count == 0:
+        status = "new_entry"
+    elif count == 1:
+        status = "unique_match"
+    elif count <= 3:
+        status = "ambiguous"
+    else:
+        status = "too_ambiguous"
 
     return {
-        "scores": results,
-        "best_match": best
+        "status": status,
+        "candidates_found": count,
+        "candidates": candidates
     }
 
 # =========================
 # UI
 # =========================
 
-st.title("🧪 Fase 2 (Sandbox): detecção de duplicatas")
-st.caption("⚠️ Não escreve no Notion. Apenas testes de score.")
+st.title("🧪 Fase 2 (Sandbox): verificação no Notion")
+st.caption("⚠️ Read-only · mostra até 3 possibilidades · sem decisão automática")
 
 url = st.text_input("URL do mod")
 
@@ -174,48 +193,42 @@ if st.button("Analisar") and url.strip():
     with st.spinner("Analisando..."):
         html = fetch_page(url)
         identity = extract_identity(html, url)
-        scoring = score_against_notion(identity)
+        phase2_result = phase2(identity)
 
-    st.subheader("📦 Identidade")
+    st.subheader("📦 Identidade detectada")
     st.write(f"**Mod:** {identity['mod_name']}")
     st.write(f"**Criador:** {identity['creator']}")
+    st.write(f"**Domínio:** {identity['domain']}")
 
-    st.subheader("🔎 Verificação de duplicata")
+    st.subheader("🔎 Resultado da Fase 2")
+    st.write("**Status:**", phase2_result["status"])
+    st.write("**Candidatos encontrados:**", phase2_result["candidates_found"])
 
-    score = scoring["best_match"]["score"]
-
-    if score >= 0.6:
-        st.error("🚨 Provável duplicata")
-    elif score >= 0.35:
-        st.warning("⚠️ Possível duplicata")
+    if phase2_result["candidates_found"] > 0:
+        for c in phase2_result["candidates"]:
+            st.markdown(
+                f"- **[{c['title']}]({c['url']})**  \n"
+                f"  Categoria: {c['category'] or '—'} · "
+                f"Prioridade: {c['priority'] or '—'}  \n"
+                f"  Motivo: _{c['reason']}_"
+            )
     else:
-        st.success("✅ Provavelmente novo mod")
+        st.success("Nenhuma entrada correspondente encontrada no Notion.")
 
-    st.write(f"**Score:** {score}")
-    st.write(f"**Possível match:** {scoring['best_match']['notion_name']}")
-
-    with st.expander("🔍 Debug detalhado"):
+    with st.expander("🔍 Debug completo"):
         st.json({
             "identity": identity,
-            **scoring
+            "phase2": phase2_result
         })
-
 
 # =========================
 # FOOTER
 # =========================
 
-
 st.markdown(
     """
     <div style="text-align: center; padding: 1rem 0; font-size: 0.9rem; color: #6b7280;">
-        <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png" 
-             alt="Favicon" 
-             style="height: 20px; vertical-align: middle; margin-right: 8px;">
-        Criado por Akin (@UnpaidSimmer) · v3.4 · Sandbox
-        <div style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6;">
-            v3.3
-        </div>
+        Criado por Akin (@UnpaidSimmer) · v3.6 · Sandbox
     </div>
     """,
     unsafe_allow_html=True
