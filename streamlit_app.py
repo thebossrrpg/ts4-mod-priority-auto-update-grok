@@ -144,7 +144,7 @@ def analyze_url(url: str) -> dict:
 # UI
 # =========================
 
-st.title("TS4 Mod Analyzer — Phase 1")
+st.title("TS4 Mod Analyzer")
 st.markdown(
     "Cole a **URL de um mod**.  \n"
     "Extrai identidade básica para evitar duplicatas no Notion."
