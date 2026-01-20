@@ -1,20 +1,22 @@
 # ============================================================
-# TS4 Mod Analyzer — Phase 1 → Phase 2 (Notion Integration)
-# Version: v3.3.2
+# TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
+# Version: v3.4.0
 #
 # Status:
 # - Phase 1: Stable (ironclad)
-# - Phase 2: Functional (baseline)
+# - Phase 2: Deterministic Notion matching
+# - Phase 3: IA (last resort, gated, auditável)
 #
 # Notes:
 # - Nenhuma decisão automática
 # - Notion é a base canônica
-# - Escrita ocorre apenas sob ação humana
+# - IA apenas compara identidade × candidatos
 # ============================================================
 
 import streamlit as st
 import requests
 import re
+import json
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from notion_client import Client
@@ -31,7 +33,7 @@ if "analysis_result" not in st.session_state:
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 2 · v3.3.2",
+    page_title="TS4 Mod Analyzer — Phase 2 · v3.4.0",
     layout="centered"
 )
 
@@ -40,12 +42,11 @@ REQUEST_HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    )
 }
 
 # =========================
-# NOTION CLIENT (secrets)
+# NOTION CLIENT
 # =========================
 
 NOTION_TOKEN = st.secrets["notion"]["token"]
@@ -53,27 +54,39 @@ NOTION_DATABASE_ID = st.secrets["notion"]["database_id"]
 notion = Client(auth=NOTION_TOKEN)
 
 # =========================
+# HUGGING FACE (IA)
+# =========================
+
+HF_TOKEN = st.secrets["huggingface"]["token"]
+HF_HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+HF_PRIMARY_MODEL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
+HF_FALLBACK_MODEL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
+
+# =========================
 # FETCH
 # =========================
 
 def fetch_page(url: str) -> str:
     try:
-        response = requests.get(url, headers=REQUEST_HEADERS, timeout=25)
-        return response.text or ""
+        r = requests.get(url, headers=REQUEST_HEADERS, timeout=25)
+        return r.text or ""
     except Exception:
         return ""
 
 # =========================
-# EXTRAÇÃO DE IDENTIDADE
+# IDENTIDADE (Phase 1)
 # =========================
 
 def extract_identity(html: str, url: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
 
     page_title = soup.title.get_text(strip=True) if soup.title else None
+    og_title, og_site = None, None
 
-    og_title = None
-    og_site = None
     for meta in soup.find_all("meta"):
         if meta.get("property") == "og:title":
             og_title = meta.get("content", "").strip()
@@ -83,7 +96,7 @@ def extract_identity(html: str, url: str) -> dict:
     parsed = urlparse(url)
     slug = parsed.path.strip("/").replace("-", " ").replace("/", " ").strip()
 
-    blocked_patterns = r"(just a moment|cloudflare|access denied|checking your browser|patreon login)"
+    blocked_patterns = r"(just a moment|cloudflare|access denied|checking your browser|patreon)"
     is_blocked = bool(
         re.search(blocked_patterns, html.lower())
         or (page_title and re.search(blocked_patterns, page_title.lower()))
@@ -94,126 +107,132 @@ def extract_identity(html: str, url: str) -> dict:
         "og_title": og_title,
         "og_site": og_site,
         "url_slug": slug,
-        "is_blocked": is_blocked,
-        "domain": parsed.netloc.replace("www.", "")
+        "domain": parsed.netloc.replace("www.", ""),
+        "is_blocked": is_blocked
     }
-
-# =========================
-# NORMALIZAÇÃO
-# =========================
 
 def normalize_name(raw: str) -> str:
     if not raw:
         return "—"
     cleaned = re.sub(r"\s+", " ", raw).strip()
-    cleaned = re.sub(r"(\b\w+\b)(\s+\1)+$", r"\1", cleaned, flags=re.I)
     cleaned = re.sub(r"(by\s+[\w\s]+)$", "", cleaned, flags=re.I).strip()
     return cleaned.title() if cleaned.islower() else cleaned
-
-def normalize_identity(identity: dict) -> dict:
-    raw_name = (
-        identity["page_title"]
-        or identity["og_title"]
-        or identity["url_slug"]
-        or "Desconhecido"
-    )
-    mod_name = normalize_name(raw_name)
-
-    # Creator é informativo apenas (não confiável para matching)
-    creator = identity["og_site"] or identity["domain"]
-
-    return {
-        "mod_name": mod_name,
-        "creator": creator or "—"
-    }
-
-# =========================
-# ANÁLISE
-# =========================
 
 def analyze_url(url: str) -> dict:
     html = fetch_page(url)
     raw = extract_identity(html, url)
-    norm = normalize_identity(raw)
+
+    raw_name = raw["page_title"] or raw["og_title"] or raw["url_slug"]
+    mod_name = normalize_name(raw_name)
+
     return {
         "url": url,
-        "mod_name": norm["mod_name"],
-        "creator": norm["creator"],
+        "mod_name": mod_name,
         "debug": raw
     }
 
 # =========================
-# NOTION – BUSCA DUPLICATA
+# PHASE 2 — NOTION MATCH
 # =========================
 
-def search_notion_duplicate(url: str, mod_name: str) -> dict | None:
-    try:
-        # 1. URL exata (canônico)
-        response = notion.databases.query(
-            database_id=NOTION_DATABASE_ID,
-            filter={
-                "property": "URL",
-                "url": {"equals": url}
-            }
-        )
-        if response.get("results"):
-            return response["results"][0]
+def search_notion_candidates(mod_name: str, url: str) -> list:
+    candidates = []
 
-        # 2. Nome do arquivo (fallback)
-        response_name = notion.databases.query(
+    try:
+        # URL exata
+        r = notion.databases.query(
+            database_id=NOTION_DATABASE_ID,
+            filter={"property": "URL", "url": {"equals": url}}
+        )
+        candidates.extend(r["results"])
+    except Exception:
+        pass
+
+    try:
+        # Filename
+        r = notion.databases.query(
             database_id=NOTION_DATABASE_ID,
             filter={
                 "property": "Filename",
                 "title": {"contains": mod_name}
             }
         )
-        if response_name.get("results"):
-            return response_name["results"][0]
-
-        # 3. Slug (opcional, silencioso)
-        slug = urlparse(url).path.strip("/").replace("-", " ").lower()
-        try:
-            response_slug = notion.databases.query(
-                database_id=NOTION_DATABASE_ID,
-                filter={
-                    "property": "Slug",
-                    "rich_text": {"contains": slug}
-                }
-            )
-            if response_slug.get("results"):
-                return response_slug["results"][0]
-        except Exception:
-            # Propriedade Slug não existe → comportamento esperado
-            pass
-
-        return None
-
+        candidates.extend(r["results"])
     except Exception:
-        # Qualquer erro real do Notion não deve quebrar a UI
-        return None
+        pass
+
+    return list({c["id"]: c for c in candidates}.values())
 
 # =========================
-# NOTION – CRIAR ENTRADA
+# PHASE 3 — IA (GATED)
 # =========================
 
-def create_notion_entry(mod_name: str, creator: str, url: str):
-    try:
-        slug = urlparse(url).path.strip("/").replace("-", " ").lower()[:50]
+def slug_quality(slug: str) -> str:
+    if not slug or len(slug.split()) <= 2:
+        return "poor"
+    return "good"
 
-        notion.pages.create(
-            parent={"database_id": NOTION_DATABASE_ID},
-            properties={
-                "Filename": {"title": [{"text": {"content": mod_name}}]},
-                "Creator": {"multi_select": [{"name": creator}]} if creator else None,
-                "URL": {"url": url},
-                "Slug": {"rich_text": [{"text": {"content": slug}}]},
-                "Status": {"select": {"name": "Pendente"}},
-                "Notes": {"rich_text": [{"text": {"content": "Adicionado via app – Phase 2"}}]}
+def build_ai_payload(identity, candidates):
+    return {
+        "identity": {
+            "title": identity["mod_name"],
+            "domain": identity["debug"]["domain"],
+            "slug": identity["debug"]["url_slug"],
+            "page_blocked": identity["debug"]["is_blocked"]
+        },
+        "candidates": [
+            {
+                "notion_id": c["id"],
+                "title": c["properties"]["Filename"]["title"][0]["plain_text"]
             }
-        )
-        st.success(f"Entrada criada no Notion: **{mod_name}**")
-    except Exception as e:
-        st.error(f"Erro ao criar no Notion: {str(e)}")
+            for c in candidates
+            if c["properties"]["Filename"]["title"]
+        ]
+    }
+
+def call_primary_model(payload):
+    prompt = f"""
+Compare the mod identity with the candidates.
+
+Rules:
+- Return JSON only
+- match=true only if EXACTLY ONE clear match exists
+- Do not guess
+
+Payload:
+{json.dumps(payload, ensure_ascii=False)}
+"""
+
+    r = requests.post(
+        HF_PRIMARY_MODEL,
+        headers=HF_HEADERS,
+        json={"inputs": prompt, "parameters": {"temperature": 0}}
+    )
+    return json.loads(r.json()[0]["generated_text"])
+
+def call_fallback_model(identity, candidates):
+    labels = [c["title"] for c in candidates]
+
+    r = requests.post(
+        HF_FALLBACK_MODEL,
+        headers=HF_HEADERS,
+        json={
+            "inputs": identity["mod_name"],
+            "parameters": {
+                "candidate_labels": labels,
+                "multi_label": True
+            }
+        }
+    )
+
+    scores = r.json()["scores"]
+    strong = [
+        candidates[i]
+        for i, s in enumerate(scores)
+        if s > 0.85
+    ]
+
+    return strong
 
 # =========================
 # UI
@@ -221,69 +240,49 @@ def create_notion_entry(mod_name: str, creator: str, url: str):
 
 st.title("TS4 Mod Analyzer — Phase 2")
 
-st.markdown(
-    "Cole a **URL de um mod**.  \n"
-    "Extrai identidade básica e verifica duplicatas no **Notion (base canônica)**."
-)
+url_input = st.text_input("URL do mod")
 
-url_input = st.text_input(
-    "URL do mod",
-    placeholder="Cole aqui a URL completa do mod"
-)
-
-if st.button("Analisar"):
-    if not url_input.strip():
-        st.warning("Cole uma URL válida.")
-    else:
-        with st.spinner("Analisando..."):
-            st.session_state.analysis_result = analyze_url(url_input.strip())
-
-# =========================
-# RESULTADO
-# =========================
+if st.button("Analisar") and url_input.strip():
+    with st.spinner("Analisando..."):
+        st.session_state.analysis_result = analyze_url(url_input.strip())
 
 result = st.session_state.analysis_result
 
 if result:
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📦 Mod")
-        st.write(result["mod_name"])
-
-    with col2:
-        st.subheader("👤 Criador")
-        st.write(result["creator"])
-
-    st.success("Identidade extraída com sucesso.")
+    st.subheader("📦 Mod")
+    st.write(result["mod_name"])
 
     with st.expander("🔍 Debug técnico"):
         st.json(result["debug"])
 
-    if result["debug"]["is_blocked"]:
-        st.warning("⚠️ Bloqueio detectado (Cloudflare / Patreon). Fallback aplicado.")
-
     st.markdown("---")
-    st.subheader("Notion — Duplicatas e Criação")
+    st.subheader("Notion")
 
-    existing = search_notion_duplicate(
-        result["url"],
-        result["mod_name"]
-    )
+    candidates = search_notion_candidates(result["mod_name"], result["url"])
 
-    if existing:
-        page_id = existing["id"].replace("-", "")
-        page_url = f"https://www.notion.so/{page_id}"
-        st.info("Este mod **já existe** no Notion.")
-        st.markdown(f"[Abrir página existente]({page_url})")
+    if candidates:
+        st.success("Match encontrado no Notion.")
+        for c in candidates:
+            page_url = f"https://www.notion.so/{c['id'].replace('-', '')}"
+            title = c["properties"]["Filename"]["title"][0]["plain_text"]
+            st.markdown(f"- [{title}]({page_url})")
     else:
-        st.info("Nenhuma duplicata encontrada.")
-        if st.button("Criar nova entrada no Notion"):
-            create_notion_entry(
-                result["mod_name"],
-                result["creator"],
-                result["url"]
-            )
+        # === PHASE 3 GATE ===
+        if (
+            result["debug"]["is_blocked"]
+            or slug_quality(result["debug"]["url_slug"]) == "poor"
+        ):
+            st.warning("Identidade fraca — acionando IA (Fase 3)")
+
+            payload = build_ai_payload(result, [])
+            primary = call_primary_model(payload)
+
+            if primary.get("match"):
+                st.success("IA identificou um match inequívoco.")
+            else:
+                st.info("IA não conseguiu colapsar o match.")
+        else:
+            st.info("Nenhuma duplicata encontrada.")
 
 # =========================
 # FOOTER
@@ -291,14 +290,11 @@ if result:
 
 st.markdown(
     """
-    <div style="text-align: center; padding: 1rem 0; font-size: 0.9rem; color: #6b7280;">
+    <div style="text-align:center;padding:1rem 0;font-size:0.85rem;color:#6b7280;">
         <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
-             alt="Favicon"
-             style="height: 20px; vertical-align: middle; margin-right: 8px;">
+             style="height:20px;vertical-align:middle;margin-right:6px;">
         Criado por Akin (@UnpaidSimmer)
-        <div style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6;">
-            v3.3.2 · Phase 2 funcional · Notion real
-        </div>
+        <div style="font-size:0.7rem;opacity:0.6;">v3.4.0 · Phase 3 (IA controlada)</div>
     </div>
     """,
     unsafe_allow_html=True
