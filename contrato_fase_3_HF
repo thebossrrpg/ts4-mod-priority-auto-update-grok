@@ -1,0 +1,143 @@
+
+# CONTRATO TÉCNICO — FASE 3
+TS4 Mod Analyzer — v3.4.0 (Hugging Face Edition)
+
+## Modelos de IA (Definição Final)
+
+### Modelo Primário (default)
+- **google/flan-t5-base**
+- Uso:
+  - Classificação simples
+  - Matching plausível
+  - Validação semântica leve
+- Justificativa:
+  - Instruction-tuned
+  - Estável no Hugging Face Inference API (free tier)
+  - Baixa latência
+  - Compatível com Streamlit Cloud (CPU)
+- Parâmetros obrigatórios:
+  - temperature = 0
+  - top_p = 1
+
+### Modelo Secundário (fallback único)
+- **facebook/bart-large-mnli**
+- Uso:
+  - Classificação NLI
+  - Avaliação de correspondência quando o primário falhar
+- Justificativa:
+  - Especializado em classificação
+  - Muito estável no free tier
+  - Mais confiável que modelos 7B+ em ambiente serverless
+- Restrições:
+  - Executado no máximo uma vez por mod
+  - Nunca em loop
+- Parâmetros obrigatórios:
+  - temperature = 0
+  - top_p = 1
+
+---
+
+## 1. Princípios Invioláveis
+
+1. Notion é a base canônica
+2. A IA nunca escreve no Notion
+3. A IA nunca decide
+4. A IA só existe como fallback assistivo
+5. A lógica determinística sempre prevalece
+
+---
+
+## 2. Condições Estritas para Chamada da IA
+
+A IA **só pode ser acionada** quando TODAS as condições forem verdadeiras:
+- Nenhuma duplicata encontrada via:
+  - URL
+  - Filename normalizado
+  - Slug confiável
+- E pelo menos um dos seguintes:
+  - Slug classificado como lixo
+  - Domínio bloqueado (Cloudflare / Patreon / acesso negado)
+
+Caso contrário:
+👉 IA NÃO É CHAMADA
+
+---
+
+## 3. Contexto Máximo Permitido à IA
+
+- Máximo absoluto: **5 entradas do Notion**
+- Cada entrada contém APENAS:
+  - Filename
+  - URL
+
+Nenhuma outra propriedade é permitida.
+
+---
+
+## 4. Funções Permitidas da IA
+
+A IA pode SOMENTE:
+- Avaliar correspondência plausível
+- Classificar identidade como:
+  - utilizável
+  - lixo / não confiável
+
+A IA NUNCA:
+- Cria nomes
+- Sugere criadores
+- Normaliza dados
+- Decide criação
+- Decide prioridade
+- Altera fluxo do app
+- Escreve no Notion
+
+---
+
+## 5. Uso do Output da IA
+
+O output da IA é **sinal**, não verdade.
+
+Regras:
+- match = false
+  - UI exibe fallback hardcoded
+  - Nenhuma ação adicional ocorre
+- match = true
+  - Nome exibido como hyperlink
+  - Nenhuma escrita automática acontece
+
+A IA não altera estado persistente.
+
+---
+
+## 6. Limites de Uso
+
+- Máximo de chamadas por mod: **2**
+- Sem retries automáticos
+- Sem chamadas em massa
+- Sem dependência estrutural
+
+---
+
+## 7. Objetivo Técnico da Fase 3
+
+- Reduzir falsos negativos
+- Preservar controle humano
+- Manter custo zero
+- Garantir auditabilidade
+- Não aumentar automação
+
+---
+
+## 8. Cláusula Final de Segurança
+
+Em qualquer conflito entre:
+- lógica determinística
+- output da IA
+
+👉 **a lógica determinística sempre vence**.
+
+---
+
+Contrato congelável para **v3.4.0**
+Backend de IA: **Hugging Face**
+Ambiente alvo: **Streamlit Cloud (100% online, custo zero)**
