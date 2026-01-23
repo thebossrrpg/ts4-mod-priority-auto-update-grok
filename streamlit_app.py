@@ -139,7 +139,6 @@ def search_notion_candidates(mod_name: str, url: str) -> list:
     candidates = []
 
     try:
-        # URL exata
         r = notion.databases.query(
             database_id=NOTION_DATABASE_ID,
             filter={"property": "URL", "url": {"equals": url}}
@@ -149,7 +148,6 @@ def search_notion_candidates(mod_name: str, url: str) -> list:
         pass
 
     try:
-        # Filename
         r = notion.databases.query(
             database_id=NOTION_DATABASE_ID,
             filter={
@@ -203,36 +201,63 @@ Payload:
 {json.dumps(payload, ensure_ascii=False)}
 """
 
-    r = requests.post(
-        HF_PRIMARY_MODEL,
-        headers=HF_HEADERS,
-        json={"inputs": prompt, "parameters": {"temperature": 0}}
-    )
-    return json.loads(r.json()[0]["generated_text"])
+    try:
+        r = requests.post(
+            HF_PRIMARY_MODEL,
+            headers=HF_HEADERS,
+            json={"inputs": prompt, "parameters": {"temperature": 0}},
+            timeout=30
+        )
+        data = r.json()
+    except Exception:
+        return {"match": False, "confidence": 0.0, "alternatives": []}
+
+    if isinstance(data, dict) and "error" in data:
+        return {"match": False, "confidence": 0.0, "alternatives": []}
+
+    if not isinstance(data, list) or not data:
+        return {"match": False, "confidence": 0.0, "alternatives": []}
+
+    item = data[0]
+    if "generated_text" not in item:
+        return {"match": False, "confidence": 0.0, "alternatives": []}
+
+    try:
+        return json.loads(item["generated_text"])
+    except Exception:
+        return {"match": False, "confidence": 0.0, "alternatives": []}
 
 def call_fallback_model(identity, candidates):
+    if not candidates:
+        return []
+
     labels = [c["title"] for c in candidates]
 
-    r = requests.post(
-        HF_FALLBACK_MODEL,
-        headers=HF_HEADERS,
-        json={
-            "inputs": identity["mod_name"],
-            "parameters": {
-                "candidate_labels": labels,
-                "multi_label": True
-            }
-        }
-    )
+    try:
+        r = requests.post(
+            HF_FALLBACK_MODEL,
+            headers=HF_HEADERS,
+            json={
+                "inputs": identity["mod_name"],
+                "parameters": {
+                    "candidate_labels": labels,
+                    "multi_label": True
+                }
+            },
+            timeout=30
+        )
+        data = r.json()
+    except Exception:
+        return []
 
-    scores = r.json()["scores"]
-    strong = [
+    if not isinstance(data, dict) or "scores" not in data:
+        return []
+
+    return [
         candidates[i]
-        for i, s in enumerate(scores)
-        if s > 0.85
+        for i, score in enumerate(data["scores"])
+        if score >= 0.85
     ]
-
-    return strong
 
 # =========================
 # UI
@@ -267,7 +292,6 @@ if result:
             title = c["properties"]["Filename"]["title"][0]["plain_text"]
             st.markdown(f"- [{title}]({page_url})")
     else:
-        # === PHASE 3 GATE ===
         if (
             result["debug"]["is_blocked"]
             or slug_quality(result["debug"]["url_slug"]) == "poor"
