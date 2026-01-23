@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.4.0
+# Version: v3.4.1
 #
 # Status:
 # - Phase 1: Stable (ironclad)
@@ -20,6 +20,7 @@ import json
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from notion_client import Client
+from datetime import datetime
 
 # =========================
 # SESSION STATE
@@ -33,7 +34,7 @@ if "analysis_result" not in st.session_state:
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 2 · v3.4.0",
+    page_title="TS4 Mod Analyzer — Phase 2 · v3.4.1",
     layout="centered"
 )
 
@@ -150,10 +151,7 @@ def search_notion_candidates(mod_name: str, url: str) -> list:
     try:
         r = notion.databases.query(
             database_id=NOTION_DATABASE_ID,
-            filter={
-                "property": "Filename",
-                "title": {"contains": mod_name}
-            }
+            filter={"property": "Filename", "title": {"contains": mod_name}}
         )
         candidates.extend(r["results"])
     except Exception:
@@ -162,7 +160,60 @@ def search_notion_candidates(mod_name: str, url: str) -> list:
     return list({c["id"]: c for c in candidates}.values())
 
 # =========================
-# PHASE 3 — IA (GATED)
+# PHASE 3 — HELPERS (PASSO 1)
+# =========================
+
+def tokenize(text: str) -> set:
+    if not text:
+        return set()
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+def tokenize_identity(identity: dict) -> set:
+    tokens = set()
+    tokens |= tokenize(identity["mod_name"])
+    tokens |= tokenize(identity["debug"].get("page_title"))
+    tokens |= tokenize(identity["debug"].get("og_title"))
+    tokens |= tokenize(identity["debug"].get("url_slug"))
+    tokens |= tokenize(identity["url"])
+    return tokens
+
+def tokenize_candidate(candidate: dict) -> set:
+    title = candidate["properties"]["Filename"]["title"]
+    text = title[0]["plain_text"] if title else ""
+    return tokenize(text)
+
+def strong_token_overlap(identity: dict, candidates: list) -> bool:
+    identity_tokens = tokenize_identity(identity)
+    for c in candidates:
+        overlap = identity_tokens & tokenize_candidate(c)
+        if len(overlap) >= 2:
+            return True
+    return False
+
+def write_phase3_log(identity, primary_result, fallback_result, candidates):
+    log = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "phase": "PHASE_3",
+        "identity": identity["mod_name"],
+        "page_blocked": identity["debug"]["is_blocked"],
+        "primary_model": primary_result,
+        "fallback_model": fallback_result,
+        "candidates_count": len(candidates),
+        "final_state": (
+            "MATCH" if primary_result.get("match")
+            else "AMBIGUOUS"
+        )
+    }
+
+    st.download_button(
+        label="📄 Baixar log técnico da IA",
+        data=json.dumps(log, indent=2, ensure_ascii=False),
+        file_name=f"phase3_log_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
+        mime="application/json"
+    )
+
+# =========================
+# PHASE 3 — IA (EXISTENTE)
 # =========================
 
 def slug_quality(slug: str) -> str:
@@ -200,64 +251,12 @@ Rules:
 Payload:
 {json.dumps(payload, ensure_ascii=False)}
 """
-
-    try:
-        r = requests.post(
-            HF_PRIMARY_MODEL,
-            headers=HF_HEADERS,
-            json={"inputs": prompt, "parameters": {"temperature": 0}},
-            timeout=30
-        )
-        data = r.json()
-    except Exception:
-        return {"match": False, "confidence": 0.0, "alternatives": []}
-
-    if isinstance(data, dict) and "error" in data:
-        return {"match": False, "confidence": 0.0, "alternatives": []}
-
-    if not isinstance(data, list) or not data:
-        return {"match": False, "confidence": 0.0, "alternatives": []}
-
-    item = data[0]
-    if "generated_text" not in item:
-        return {"match": False, "confidence": 0.0, "alternatives": []}
-
-    try:
-        return json.loads(item["generated_text"])
-    except Exception:
-        return {"match": False, "confidence": 0.0, "alternatives": []}
-
-def call_fallback_model(identity, candidates):
-    if not candidates:
-        return []
-
-    labels = [c["title"] for c in candidates]
-
-    try:
-        r = requests.post(
-            HF_FALLBACK_MODEL,
-            headers=HF_HEADERS,
-            json={
-                "inputs": identity["mod_name"],
-                "parameters": {
-                    "candidate_labels": labels,
-                    "multi_label": True
-                }
-            },
-            timeout=30
-        )
-        data = r.json()
-    except Exception:
-        return []
-
-    if not isinstance(data, dict) or "scores" not in data:
-        return []
-
-    return [
-        candidates[i]
-        for i, score in enumerate(data["scores"])
-        if score >= 0.85
-    ]
+    r = requests.post(
+        HF_PRIMARY_MODEL,
+        headers=HF_HEADERS,
+        json={"inputs": prompt, "parameters": {"temperature": 0}}
+    )
+    return json.loads(r.json()[0]["generated_text"])
 
 # =========================
 # UI
@@ -292,19 +291,13 @@ if result:
             title = c["properties"]["Filename"]["title"][0]["plain_text"]
             st.markdown(f"- [{title}]({page_url})")
     else:
-        if (
-            result["debug"]["is_blocked"]
-            or slug_quality(result["debug"]["url_slug"]) == "poor"
-        ):
+        if result["debug"]["is_blocked"] or slug_quality(result["debug"]["url_slug"]) == "poor":
             st.warning("Identidade fraca — acionando IA (Fase 3)")
-
             payload = build_ai_payload(result, [])
             primary = call_primary_model(payload)
-
-            if primary.get("match"):
-                st.success("IA identificou um match inequívoco.")
-            else:
-                st.info("IA não conseguiu colapsar o match.")
+            if not primary.get("match"):
+                write_phase3_log(result, primary, None, [])
+            st.info("IA não conseguiu colapsar o match.")
         else:
             st.info("Nenhuma duplicata encontrada.")
 
@@ -318,7 +311,7 @@ st.markdown(
         <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
              style="height:20px;vertical-align:middle;margin-right:6px;">
         Criado por Akin (@UnpaidSimmer)
-        <div style="font-size:0.7rem;opacity:0.6;">v3.4.0 · Phase 3 (IA controlada)</div>
+        <div style="font-size:0.7rem;opacity:0.6;">v3.4.1 · Phase 3 (IA controlada)</div>
     </div>
     """,
     unsafe_allow_html=True
