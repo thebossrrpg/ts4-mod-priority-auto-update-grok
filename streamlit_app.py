@@ -57,6 +57,9 @@ if "notfoundcache" not in st.session_state:
 if "notioncache_loaded" not in st.session_state:
     st.session_state.notioncache_loaded = False
 
+if "notioncache" not in st.session_state:
+    st.session_state.notioncache = {}
+
 # =========================
 # CONFIG
 # =========================
@@ -123,8 +126,10 @@ def build_identity_hash(identity: dict) -> str:
 # =========================
 
 def load_notioncache(data: dict):
+    st.session_state.notioncache = data.get("notioncache", {})
     st.session_state.matchcache = data.get("matchcache", {})
     st.session_state.notfoundcache = data.get("notfoundcache", {})
+    st.session_state.decision_log = data.get("decision_log", [])
     st.session_state.notioncache_loaded = True
     st.session_state.analysis_result = None
 
@@ -354,7 +359,10 @@ if st.button("Analisar") and url_input.strip():
         st.session_state.analysis_result = decision
         st.stop()
 
-    candidates = search_notion_candidates(identity["mod_name"], identity["url"])
+    candidates = search_notioncache_candidates(
+    identity["mod_name"],
+    identity["url"]
+    )
 
     decision = {
         "timestamp": now(),
