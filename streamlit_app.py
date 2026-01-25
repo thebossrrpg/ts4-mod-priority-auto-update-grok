@@ -428,7 +428,7 @@ else:
         decision["reason"] = "Ambiguous or no candidates"
         st.session_state.notfoundcache[identity_hash] = decision
 
-    upsert_decision_log(identity_hash, decision)
+upsert_decision_log(identity_hash, decision)
     st.session_state.analysis_result = decision
 
 # =========================
