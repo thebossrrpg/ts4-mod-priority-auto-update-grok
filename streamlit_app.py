@@ -1,14 +1,12 @@
 # ============================================================
-# TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.0
+# TS4 Mod Analyzer — Phase 1 → Phase 3 (+ Phase 4 lógica)
+# Version: v3.5.1
 #
 # Contract:
 # - Phase 1 preserved (identity extraction)
 # - Phase 2 preserved (deterministic Notion match)
-# - Phase 3 preserved (IA last resort)
-# - ADDITIVE ONLY:
-#   • Deterministic cache
-#   • Canonical decision log
+# - Phase 3 preserved (IA last resort, NON-DECISIVE)
+# - Phase 4 (post-processing, NON-DECISIVE)
 #
 # Rule: New version = SUM, never subtraction
 # ============================================================
@@ -28,7 +26,7 @@ from datetime import datetime
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.0",
+    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.1",
     layout="centered"
 )
 
@@ -48,7 +46,6 @@ if "decision_log" not in st.session_state:
 if "cache" not in st.session_state:
     st.session_state.cache = {}
 
-# Phase 2 lazy cache (Notion pages)
 if "phase2_cache_loaded" not in st.session_state:
     st.session_state.phase2_cache_loaded = False
 
@@ -58,6 +55,8 @@ if "phase2_pages" not in st.session_state:
 # =========================
 # CONFIG
 # =========================
+
+AI_MATCH_THRESHOLD = 0.93  # 👈 ajuste canônico
 
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -162,14 +161,10 @@ def analyze_url(url: str) -> dict:
     }
 
 # =========================
-# PHASE 2 — LAZY CACHE LOAD
+# PHASE 2 — NOTION
 # =========================
 
 def ensure_phase2_cache_loaded():
-    """
-    Lazy-load full Notion database only when Phase 2 is needed.
-    Never runs at startup.
-    """
     if st.session_state.phase2_cache_loaded:
         return
 
@@ -191,14 +186,12 @@ def ensure_phase2_cache_loaded():
 
 def search_notion_candidates(mod_name: str, url: str) -> list:
     ensure_phase2_cache_loaded()
-
     candidates = []
 
     for page in st.session_state.phase2_pages:
         props = page.get("properties", {})
         title_prop = props.get("Filename", {}).get("title", [])
         url_prop = props.get("URL", {}).get("url")
-
         title_text = title_prop[0]["plain_text"] if title_prop else ""
 
         if url_prop and url_prop == url:
@@ -209,11 +202,8 @@ def search_notion_candidates(mod_name: str, url: str) -> list:
     return candidates
 
 # =========================
-# PHASE 3 — IA
+# PHASE 3 — IA (NON-DECISIVE)
 # =========================
-
-def slug_quality(slug: str) -> str:
-    return "poor" if not slug or len(slug.split()) <= 2 else "good"
 
 def build_ai_payload(identity, candidates):
     return {
@@ -223,23 +213,17 @@ def build_ai_payload(identity, candidates):
             "slug": identity["debug"]["url_slug"],
             "page_blocked": identity["debug"]["is_blocked"],
         },
-        "candidates": [
-            {
-                "notion_id": c["id"],
-                "title": c["properties"]["Filename"]["title"][0]["plain_text"],
-            }
-            for c in candidates
-            if c["properties"]["Filename"]["title"]
-        ],
+        "candidates": candidates,
     }
 
 def call_primary_model(payload):
     prompt = f"""
-Compare the mod identity with the candidates.
+Return JSON only with:
+- match (boolean)
+- confidence (0 to 1)
 
 Rules:
-- Return JSON only
-- match=true only if EXACTLY ONE clear match exists
+- match=true ONLY if one clear match exists
 - Do not guess
 
 Payload:
@@ -258,24 +242,12 @@ Payload:
     except Exception:
         return None
 
-def log_ai_event(stage, payload, result):
-    st.session_state.ai_logs.append({
-        "timestamp": now(),
-        "stage": stage,
-        "payload": payload,
-        "result": result,
-    })
-
 # =========================
-# UI — HEADER
+# UI
 # =========================
 
 st.title("TS4 Mod Analyzer — Phase 3")
 st.caption("Determinístico · Auditável · Zero achismo")
-
-# =========================
-# UI — ANALYSIS
-# =========================
 
 url_input = st.text_input("URL do mod")
 
@@ -296,9 +268,6 @@ if result:
     st.subheader("📦 Mod")
     st.write(result["mod_name"])
 
-    with st.expander("🔍 Debug técnico"):
-        st.json(result["debug"])
-
     candidates = search_notion_candidates(result["mod_name"], result["url"])
 
     decision_record = {
@@ -306,6 +275,8 @@ if result:
         "identity": result,
         "phase_2_candidates": len(candidates),
         "decision": None,
+        "ai_match": False,
+        "ai_confidence": None,
     }
 
     if candidates:
@@ -313,19 +284,22 @@ if result:
         st.success("Match encontrado no Notion.")
     else:
         payload = build_ai_payload(result, [])
-        ai_result = None
+        ai_result = call_primary_model(payload)
 
-        if result["debug"]["is_blocked"] or slug_quality(result["debug"]["url_slug"]) == "poor":
-            ai_result = call_primary_model(payload)
+        if ai_result:
+            confidence = ai_result.get("confidence", 0)
+            decision_record["ai_confidence"] = confidence
+            decision_record["ai_match"] = (
+                ai_result.get("match") is True and confidence >= AI_MATCH_THRESHOLD
+            )
 
-        log_ai_event("PHASE_3_EXECUTED", payload, ai_result)
         decision_record["decision"] = "NOT_FOUND"
         st.info("Nenhuma duplicata encontrada.")
 
     st.session_state.decision_log.append(decision_record)
 
 # =========================
-# DOWNLOADS — CACHE / LOG
+# DOWNLOADS
 # =========================
 
 st.divider()
@@ -342,20 +316,4 @@ st.download_button(
     data=json.dumps(st.session_state.decision_log, indent=2, ensure_ascii=False),
     file_name="decision_log.json",
     mime="application/json",
-)
-
-# =========================
-# FOOTER (CANÔNICO — PRESERVADO)
-# =========================
-
-st.markdown(
-    """
-    <div style="text-align:center;padding:1rem 0;font-size:0.85rem;color:#6b7280;">
-        <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
-             style="height:20px;vertical-align:middle;margin-right:6px;">
-        Criado por Akin (@UnpaidSimmer)
-        <div style="font-size:0.7rem;opacity:0.6;">v3.5.0 · Phase 3 (IA controlada)</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
 )
