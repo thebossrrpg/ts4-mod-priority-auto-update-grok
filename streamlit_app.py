@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.7 — UX update + notioncache persistente
+# Version: v3.5.7 — UI Result Fix (restore canonical result rendering)
 #
 # Contract:
 # - Phase 1 preserved (identity extraction)
@@ -423,13 +423,13 @@ if st.button("Analisar") and url_input.strip():
     st.markdown(f"**📄 {mod_title}**")
     st.markdown(f"[🔗 Abrir no Notion]({notion_url})")
 
-        else:
-            decision["decision"] = "NOT_FOUND"
-            decision["reason"] = "Ambiguous or no candidates"
-            st.session_state.notfoundcache[identity_hash] = decision
+    else:
+        decision["decision"] = "NOT_FOUND"
+        decision["reason"] = "Ambiguous or no candidates"
+        st.session_state.notfoundcache[identity_hash] = decision
 
-        upsert_decision_log(identity_hash, decision)
-        st.session_state.analysis_result = decision
+    upsert_decision_log(identity_hash, decision)
+    st.session_state.analysis_result = decision
 
 # =========================
 # UI — RESULTADO (CANÔNICO · RECONSTRUÍDO)
