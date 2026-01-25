@@ -382,7 +382,7 @@ if not st.session_state.notioncache_loaded:
     st.warning("Importe o notioncache para começar.")
     st.stop()
 
-	url_input = st.text_input("URL do mod")
+url_input = st.text_input("URL do mod")
 
 if st.button("Analisar") and url_input.strip():
     identity = analyze_url(url_input.strip())
