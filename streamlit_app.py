@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.3
+# Version: v3.5.4
 #
 # Contract:
 # - Phase 1 preserved (identity extraction)
@@ -28,7 +28,7 @@ from datetime import datetime
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.3",
+    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.4",
     layout="centered"
 )
 
@@ -108,13 +108,12 @@ def upsert_decision_log(identity_hash: str, decision: dict):
     st.session_state.decision_log.append(decision)
 
 # =========================
-# PATCH — IDENTITY HASH CANÔNICO (P5.4)
+# PATCH — IDENTITY HASH CANÔNICO (C4)
 # =========================
 
 def build_identity_hash(identity: dict) -> str:
     canonical_identity = {
         "url": identity["url"],
-        "domain": identity["debug"]["domain"],
         "mod_name": identity["mod_name"],
     }
     return sha256(json.dumps(canonical_identity, sort_keys=True))
@@ -130,22 +129,24 @@ def load_notioncache(data: dict):
     st.session_state.analysis_result = None
 
 # =========================
-# SNAPSHOT (BACKUP / RESTORE) — P5.6
+# SNAPSHOT (BACKUP / RESTORE) — C3
 # =========================
 
 def build_snapshot():
     return {
         "meta": {
-            "version": "v3.5.3",
+            "version": "v3.5.4",
             "generated_at": now(),
         },
         "matchcache": st.session_state.matchcache,
         "notfoundcache": st.session_state.notfoundcache,
+        "decision_log": st.session_state.decision_log,
     }
 
 def load_snapshot(snapshot: dict):
     st.session_state.matchcache = snapshot.get("matchcache", {})
     st.session_state.notfoundcache = snapshot.get("notfoundcache", {})
+    st.session_state.decision_log = snapshot.get("decision_log", [])
     st.session_state.analysis_result = None
     st.session_state.notioncache_loaded = True
 
@@ -214,7 +215,7 @@ def analyze_url(url: str) -> dict:
     }
 
 # =========================
-# PHASE 2 — NOTION MATCH (P5.1)
+# PHASE 2 — NOTION MATCH
 # =========================
 
 def search_notion_candidates(mod_name: str, url: str) -> list:
@@ -241,7 +242,7 @@ def search_notion_candidates(mod_name: str, url: str) -> list:
     return list({c["id"]: c for c in candidates}.values())
 
 # =========================
-# PHASE 3 — IA (P5.2 / P5.3)
+# PHASE 3 — IA
 # =========================
 
 def slug_quality(slug: str) -> str:
@@ -340,12 +341,17 @@ if st.button("Analisar") and url_input.strip():
     identity = analyze_url(url_input.strip())
     identity_hash = build_identity_hash(identity)
 
+    # C2 — cache hit também gera log canônico
     if identity_hash in st.session_state.matchcache:
-        st.session_state.analysis_result = st.session_state.matchcache[identity_hash]
+        decision = st.session_state.matchcache[identity_hash]
+        upsert_decision_log(identity_hash, decision)
+        st.session_state.analysis_result = decision
         st.stop()
 
     if identity_hash in st.session_state.notfoundcache:
-        st.session_state.analysis_result = st.session_state.notfoundcache[identity_hash]
+        decision = st.session_state.notfoundcache[identity_hash]
+        upsert_decision_log(identity_hash, decision)
+        st.session_state.analysis_result = decision
         st.stop()
 
     candidates = search_notion_candidates(identity["mod_name"], identity["url"])
@@ -360,7 +366,6 @@ if st.button("Analisar") and url_input.strip():
         "reason": None,
     }
 
-    # Phase 2 determinística
     if len(candidates) == 1:
         decision["phase_2_status"] = "UNIQUE"
         decision["decision"] = "FOUND"
@@ -369,21 +374,27 @@ if st.button("Analisar") and url_input.strip():
 
     elif len(candidates) > 1:
         decision["phase_2_status"] = "AMBIGUOUS"
-        payload = build_ai_payload(identity, candidates)
-        ai_result = call_primary_model(payload)
-        log_ai_event("PHASE_3_CALLED", payload, ai_result)
 
-        if (
-            ai_result
-            and ai_result.get("match") is True
-            and ai_result.get("confidence", 0) >= PHASE3_CONFIDENCE_THRESHOLD
-        ):
-            decision["decision"] = "FOUND"
-            decision["reason"] = f"Phase 3 confirmed unique match (confidence {ai_result['confidence']})"
-            st.session_state.matchcache[identity_hash] = decision
+        if identity["debug"]["is_blocked"] or slug_quality(identity["debug"]["url_slug"]) == "poor":
+            payload = build_ai_payload(identity, candidates)
+            ai_result = call_primary_model(payload)
+            log_ai_event("PHASE_3_CALLED", payload, ai_result)
+
+            if (
+                ai_result
+                and ai_result.get("match") is True
+                and ai_result.get("confidence", 0) >= PHASE3_CONFIDENCE_THRESHOLD
+            ):
+                decision["decision"] = "FOUND"
+                decision["reason"] = f"Phase 3 confirmed unique match (confidence {ai_result['confidence']})"
+                st.session_state.matchcache[identity_hash] = decision
+            else:
+                decision["decision"] = "NOT_FOUND"
+                decision["reason"] = "Ambiguous candidates; IA did not confirm unique match"
+                st.session_state.notfoundcache[identity_hash] = decision
         else:
             decision["decision"] = "NOT_FOUND"
-            decision["reason"] = "Ambiguous candidates; IA did not confirm unique match"
+            decision["reason"] = "Ambiguous candidates with strong identity; IA skipped"
             st.session_state.notfoundcache[identity_hash] = decision
 
     else:
@@ -449,7 +460,7 @@ with st.expander("📊 Baixar logs"):
 st.download_button(
     "📦 Baixar snapshot completo (JSON)",
     data=json.dumps(build_snapshot(), indent=2, ensure_ascii=False),
-    file_name="ts4_mod_snapshot_v3.5.3.json",
+    file_name="ts4_mod_snapshot_v3.5.4.json",
     mime="application/json",
 )
 
@@ -463,7 +474,7 @@ st.markdown(
         <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
              style="height:20px;vertical-align:middle;margin-right:6px;">
         Criado por Akin (@UnpaidSimmer)
-        <div style="font-size:0.7rem;opacity:0.6;">v3.5.3 · Phase 3 (IA controlada)</div>
+        <div style="font-size:0.7rem;opacity:0.6;">v3.5.4 · Phase 3 (IA controlada)</div>
     </div>
     """,
     unsafe_allow_html=True,
