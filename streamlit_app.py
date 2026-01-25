@@ -382,7 +382,7 @@ if not st.session_state.notioncache_loaded:
     st.warning("Importe o notioncache para começar.")
     st.stop()
 
-url_input = st.text_input("URL do mod")
+	url_input = st.text_input("URL do mod")
 
 if st.button("Analisar") and url_input.strip():
     identity = analyze_url(url_input.strip())
@@ -423,7 +423,7 @@ if st.button("Analisar") and url_input.strip():
     st.markdown(f"**📄 {mod_title}**")
     st.markdown(f"[🔗 Abrir no Notion]({notion_url})")
 
-    else:
+else:
         decision["decision"] = "NOT_FOUND"
         decision["reason"] = "Ambiguous or no candidates"
         st.session_state.notfoundcache[identity_hash] = decision
