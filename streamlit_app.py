@@ -1,19 +1,33 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.7 — UI Result Fix (restore canonical result rendering)
+# Version: v3.5.7.1 — UI Result Stabilization
 #
 # Contract:
-# - Phase 1 preserved (identity extraction)
-# - Phase 2 preserved (deterministic Notion match via cache)
-# - Phase 3 preserved (IA last resort, provides signals only)
-# - Post-Phase 3: Interprets IA signals deterministically
-# - ADDITIVE ONLY:
-#   • Deterministic cache (stores FINAL decision)
-#   • Canonical decision log (1 entry per mod, explains WHY)
-#   • Fingerprints for invalidation
-#   • Logs exportáveis (JSON / HTML)
+# - Phase 1 preserved (identity extraction from URL + HTML)
+# - Phase 2 preserved (deterministic Notion match via notioncache)
+# - Phase 3 preserved (IA as last resort, produces SIGNALS only)
+# - Post-Phase 3:
+#   • Interprets IA signals deterministically
+#   • Produces FINAL decision (FOUND / NOT_FOUND)
 #
-# Rule: New version = SUM, never subtraction
+# ADDITIVE ONLY:
+# - Deterministic caches (matchcache / notfoundcache store FINAL decision)
+# - Canonical decision log (1 entry per identity_hash, explains WHY)
+# - Stable identity hash (contractual, reproducible)
+# - Fingerprints for cache invalidation
+# - Logs exportáveis (JSON)
+# - Snapshot export (Phase 2 cache + Phase 3 results + canonical log)
+#
+# UI CONTRACT (v3.5.7.1):
+# - UI renders ONLY persisted decision fields
+# - No reconstruction of Notion data at render time
+# - No implicit access to notioncache for display
+# - FOUND shows: decision + reason + notion_url
+# - NOT_FOUND shows: decision + reason
+#
+# Rule:
+# - New version = SUM, never subtraction
+# - UI must never assume data not explicitly produced by pipeline
 # ============================================================
 
 import streamlit as st
@@ -31,7 +45,7 @@ from datetime import datetime
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.7",
+    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.7.1",
     layout="centered"
 )
 
@@ -170,7 +184,7 @@ def build_snapshot():
     return {
         "meta": {
             "app": "TS4 Mod Analyzer",
-            "version": "v3.5.7",
+            "version": "v3.5.7.1",
             "created_at": now(),
             "phase_2_fingerprint": st.session_state.notion_fingerprint,
         },
@@ -391,8 +405,10 @@ if st.button("Analisar") and url_input.strip():
 
     if identity_hash in st.session_state.matchcache:
         st.session_state.analysis_result = st.session_state.matchcache[identity_hash]
+
     elif identity_hash in st.session_state.notfoundcache:
         st.session_state.analysis_result = st.session_state.notfoundcache[identity_hash]
+
     else:
         candidates = search_notioncache_candidates(identity["mod_name"], identity["url"])
 
@@ -404,46 +420,36 @@ if st.button("Analisar") and url_input.strip():
             "phase_2_candidates": len(candidates),
             "decision": None,
             "reason": None,
+            "notion_id": None,
+            "notion_url": None,
         }
 
-		if candidates:
-			decision["decision"] = "FOUND"  # <--- Agora com indentação correta
-			matched = candidates # Pega o primeiro candidato da lista
-        
-			props = matched.get("properties", {})
-			title_prop = props.get("Filename") or props.get("Name")
-        
-			mod_title = "—"
-			if title_prop and title_prop.get("title"):
-				# Verifica se a lista 'title' não está vazia antes de acessar o índice 0
-				title_list = title_prop.get("title", [])
-				if title_list:
-					mod_title = title_list.get("plain_text", "—")
-            
-				notion_id = matched.get("id")
-				notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}"
-        
-				st.success("Match encontrado no Notion.")
-				st.markdown(f"**📄 {mod_title}**")
-				st.markdown(f"[🔗 Abrir no Notion]({notion_url})")
-        
-		if title_prop and title_prop.get("title"):
-			mod_title = title_prop["title"][0]["plain_text"]
+        if candidates:
+            matched = candidates[0]
 
-			notion_id = matched.get("id")
-			notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}"
+            notion_id = matched.get("id") or matched.get("notion_id")
+            notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}" if notion_id else None
 
-			st.success("Match encontrado no Notion.")
-			st.markdown(f"**📄 {mod_title}**")
-			st.markdown(f"[🔗 Abrir no Notion]({notion_url})")
+            decision.update({
+                "decision": "FOUND",
+                "reason": "Deterministic match (Phase 2)",
+                "notion_id": notion_id,
+                "notion_url": notion_url,
+            })
 
-		else:
-			decision["decision"] = "NOT_FOUND"
-			decision["reason"] = "Ambiguous or no candidates"
-			st.session_state.notfoundcache[identity_hash] = decision
+            st.session_state.matchcache[identity_hash] = decision
 
-upsert_decision_log(identity_hash, decision)
-st.session_state.analysis_result = decision
+        else:
+            decision.update({
+                "decision": "NOT_FOUND",
+                "reason": "No deterministic candidates",
+            })
+
+            st.session_state.notfoundcache[identity_hash] = decision
+
+        upsert_decision_log(identity_hash, decision)
+        st.session_state.analysis_result = decision
+
 
 # =========================
 # UI — RESULTADO (CANÔNICO · RECONSTRUÍDO)
@@ -475,44 +481,21 @@ if result:
 # DECISÃO FINAL
 # =========================
 
+decision = result.get("decision")
+
 if decision == "FOUND":
     st.success("✅ Mod encontrado no Notion")
-
-    # Fonte da decisão
-    source = result.get("decision_source", "UNKNOWN")
-    st.caption(f"Resolvido por: **{source}**")
-
-    candidates = result.get("candidates", [])
-
-    if candidates:
-        st.markdown("### 📚 Entradas no Notion")
-        for c in candidates:
-            page_id = c["id"]
-            page_url = f"https://www.notion.so/{page_id.replace('-', '')}"
-            title = (
-                c.get("properties", {})
-                .get("Filename", {})
-                .get("title", [{}])[0]
-                .get("plain_text", "Sem título")
-            )
-            st.markdown(f"- [{title}]({page_url})")
-    else:
-        st.warning("Match confirmado, mas sem candidatos listáveis (cache).")
+    st.markdown(f"[🔗 Abrir no Notion]({result.get('notion_url')})")
+    st.caption(result.get("reason"))
 
 elif decision == "NOT_FOUND":
-    st.info("ℹ️ Nenhuma entrada correspondente encontrada no Notion")
-
-    reason = result.get("decision_reason", "Motivo não especificado")
-    st.markdown(f"**Motivo:** {reason}")
-
-    if result.get("decision_source") == "PHASE3_IA":
-        st.caption("IA foi acionada como último recurso (Phase 3).")
-    else:
-        st.caption("Decisão determinística (Phase 2).")
+    st.info("ℹ️ Nenhuma entrada correspondente encontrada")
+    st.caption(result.get("reason"))
 
 else:
-    st.warning("⚠️ Estado de decisão não reconhecido")
+    st.warning("⚠️ Estado de decisão inválido")
     st.json(result)
+
 
 # =========================
 # DEBUG (COLAPSÁVEL)
@@ -532,7 +515,7 @@ st.markdown(
         <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
              style="height:20px;vertical-align:middle;margin-right:6px;">
         Criado por Akin (@UnpaidSimmer)
-        <div style="font-size:0.7rem;opacity:0.6;">v3.5.7 · Phase 3</div>
+        <div style="font-size:0.7rem;opacity:0.6;">v3.5.7.1 · Phase 3</div>
     </div>
     """,
     unsafe_allow_html=True,
