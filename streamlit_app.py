@@ -407,12 +407,23 @@ if st.button("Analisar") and url_input.strip():
         }
 
         if candidates:
-            decision_record["decision"] = "FOUND"
-            matched = candidates[0]  # determinístico
-            props = matched.get("properties", {})
-            title_prop = props.get("Filename") or props.get("Name")
-
-    mod_title = "—"
+        decision["decision"] = "FOUND"  # <--- Corrigido de 'decision_record' para 'decision'
+        matched = candidates # determinístico
+        
+        props = matched.get("properties", {})
+        title_prop = props.get("Filename") or props.get("Name")
+        
+        mod_title = "—"
+        if title_prop and title_prop.get("title"):
+            mod_title = title_prop["title"]["plain_text"]
+            
+        notion_id = matched.get("id")
+        notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}"
+        
+        st.success("Match encontrado no Notion.")
+        st.markdown(f"**📄 {mod_title}**")
+        st.markdown(f"[🔗 Abrir no Notion]({notion_url})")
+        
     if title_prop and title_prop.get("title"):
         mod_title = title_prop["title"][0]["plain_text"]
 
