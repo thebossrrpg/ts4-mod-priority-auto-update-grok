@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.5  # Bump para fixes de contrato (aditivo)
+# Version: v3.5.6  # Bump para update fixes de contrato (aditivo)
 #
 # Contract:
 # - Phase 1 preserved (identity extraction)
@@ -32,7 +32,7 @@ from datetime import datetime
 # =========================
 
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.5",
+    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.6",
     layout="centered"
 )
 
@@ -163,11 +163,13 @@ def build_snapshot():
     return {
         "meta": {
             "app": "TS4 Mod Analyzer",
-            "version": "v3.5.5",
+            "version": "v3.5.6",
             "created_at": now(),
             "phase_2_fingerprint": st.session_state.notion_fingerprint,
         },
-        "phase_2_cache": st.session_state.notioncache,  # Fonte de verdade
+        # 🔧 FIX: phase_2_cache é APENAS o alias serializado do notioncache no snapshot
+        # Não representa um cache distinto no runtime
+        "phase_2_cache": st.session_state.notioncache,
         "phase_3_cache": st.session_state.matchcache,  # Apenas FOUND
         "canonical_log": st.session_state.decision_log,  # Indeterminações
     }
@@ -277,6 +279,7 @@ def search_notioncache_candidates(mod_name: str, url: str) -> list:
 
 def slug_quality(slug: str) -> str:
     return "poor" if not slug or len(slug.split()) <= 2 else "good"
+    
 
 def build_ai_payload(identity, candidates):
     return {
@@ -286,14 +289,17 @@ def build_ai_payload(identity, candidates):
             "slug": identity["debug"]["url_slug"],
             "page_blocked": identity["debug"]["is_blocked"],
         },
+        # 🔧 FIX: IA pode raciocinar sobre MAIS de 5 candidatos
+        # O limite de 5 é de exposição humana / auditabilidade, não cognitivo
         "candidates": [
             {
                 "notion_id": c["notion_id"],
                 "title": c["filename"],
             }
-            for c in candidates[:5]  # Limite contrato
+            for c in candidates
         ],
     }
+
 
 def call_primary_model(payload):
     prompt = f"""
@@ -551,7 +557,7 @@ with st.expander("Downloads de logs"):
 st.download_button(
     "📦 Baixar snapshot completo (JSON)",
     data=json.dumps(build_snapshot(), indent=2, ensure_ascii=False),
-    file_name="ts4_mod_snapshot_v3.5.5.json",
+    file_name="ts4_mod_snapshot_v3.5.6.json",
     mime="application/json",
 )
 
@@ -565,7 +571,7 @@ st.markdown(
         <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
              style="height:20px;vertical-align:middle;margin-right:6px;">
         Criado por Akin (@UnpaidSimmer)
-        <div style="font-size:0.7rem;opacity:0.6;">v3.5.5 · Phase 3 (IA controlada)</div>
+        <div style="font-size:0.7rem;opacity:0.6;">v3.5.6 · Phase 3 (IA controlada)</div>
     </div>
     """,
     unsafe_allow_html=True,
