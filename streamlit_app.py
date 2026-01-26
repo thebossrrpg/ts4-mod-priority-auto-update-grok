@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.7.1 — UI Result Stabilization
+# Version: v3.5.7.1 — UI Result Stabilization (patched)
 #
 # Contract:
 # - Phase 1 preserved (identity extraction from URL + HTML)
@@ -10,29 +10,9 @@
 #   • Interprets IA signals deterministically
 #   • Produces FINAL decision (FOUND / NOT_FOUND)
 #
-# ADDITIVE ONLY:
-# - Deterministic caches (matchcache / notfoundcache store FINAL decision)
-# - Canonical decision log (1 entry per identity_hash, explains WHY)
-# - Stable identity hash (contractual, reproducible)
-# - Fingerprints for cache invalidation
-# - Logs exportáveis (JSON)
-# - Snapshot export (Phase 2 cache + Phase 3 results + canonical log)
-#
-# UI CONTRACT (v3.5.7.1):
-# - UI renders ONLY persisted decision fields
-# - No reconstruction of Notion data at render time
-# - No implicit access to notioncache for display
-# - FOUND shows: decision + reason + notion_url
-# - NOT_FOUND shows: decision + reason
-#
-# Rule:
-# - New version = SUM, never subtraction
-# - UI must never assume data not explicitly produced by pipeline
+# ADDITIVE ONLY — Contract preserved
 # ============================================================
 
-# =========================
-# IMPORTS (Atualizado)
-# =========================
 import streamlit as st
 import requests
 import re
@@ -458,28 +438,27 @@ if st.button("Analisar") and url_input.strip():
 # UI — RESULTADO (CANÔNICO · RECONSTRUÍDO)
 # =========================
 
-result = st.session_state.analysis_result
+result = st.session_state.get("analysis_result")
 
-if result:
-    st.divider()
-    st.subheader("📦 Mod analisado")
+# 🔒 PATCH CANÔNICO
+# Nunca acessar `.get()` se não houver resultado ativo
+if not result:
+    st.info("ℹ️ Insira uma URL e clique em **Analisar** para iniciar.")
+    st.stop()
 
-    # Nome do mod — fallback em cascata (contrato)
-    identity = result.get("identity", {})
+st.divider()
+st.subheader("📦 Mod analisado")
 
-    mod_name = identity.get("mod_name", "Unnamed Mod")
-    url = identity.get("url")
+# Identidade (fallback em cascata conforme contrato)
+identity = result.get("identity", {})
 
-    st.markdown(f"**Nome:** {mod_name}")
-    st.markdown(f"**URL:** {url}")
+mod_name = identity.get("mod_name", "Unnamed Mod")
+url = identity.get("url")
 
-    if result is None:
-        st.info("ℹ️ Insira uma URL e clique em **Analisar** para iniciar.")
-        st.stop()
+st.markdown(f"**Nome:** {mod_name}")
+st.markdown(f"**URL:** {url}")
 
-    decision = result.get("decision")
-
-    st.markdown("---")
+st.markdown("---")
 
 # =========================
 # DECISÃO FINAL
@@ -498,7 +477,6 @@ elif decision == "NOT_FOUND":
 
 else:
     st.warning("⚠️ Estado de decisão inválido")
-    st.json(result)
 
 
 # =========================
