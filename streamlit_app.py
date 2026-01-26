@@ -471,7 +471,7 @@ if result:
     st.markdown(f"**URL:** {url}")
 
     if not result:
-    st.stop()
+        st.stop()
 
     decision = result.get("decision")
 
