@@ -473,7 +473,8 @@ if result:
     st.markdown(f"**Nome:** {mod_name}")
     st.markdown(f"**URL:** {url}")
 
-    if not result:
+    if result is None:
+        st.info("ℹ️ Insira uma URL e clique em **Analisar** para iniciar.")
         st.stop()
 
     decision = result.get("decision")
