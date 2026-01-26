@@ -462,16 +462,16 @@ if result:
     st.subheader("📦 Mod analisado")
 
     # Nome do mod — fallback em cascata (contrato)
-    mod_name = (
-        result.get("mod_name")
-        or result.get("debug", {}).get("og_title")
-        or result.get("debug", {}).get("page_title")
-        or result.get("debug", {}).get("url_slug")
-        or "Unnamed Mod"
-    )
+    identity = result.get("identity", {})
+
+    mod_name = identity.get("mod_name", "Unnamed Mod")
+    url = identity.get("url")
 
     st.markdown(f"**Nome:** {mod_name}")
-    st.markdown(f"**URL:** {result.get('url')}")
+    st.markdown(f"**URL:** {url}")
+
+    if not result:
+    st.stop()
 
     decision = result.get("decision")
 
