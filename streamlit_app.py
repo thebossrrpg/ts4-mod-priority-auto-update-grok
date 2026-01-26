@@ -30,6 +30,9 @@
 # - UI must never assume data not explicitly produced by pipeline
 # ============================================================
 
+# =========================
+# IMPORTS (Atualizado)
+# =========================
 import streamlit as st
 import requests
 import re
@@ -38,7 +41,7 @@ import hashlib
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from notion_client import Client
-from datetime import datetime
+from datetime import datetime, timezone  # <--- Adicionado timezone
 
 # =========================
 # PAGE CONFIG (sempre primeiro)
@@ -123,14 +126,14 @@ HF_PRIMARY_MODEL = "https://api-inference.huggingface.co/models/google/flan-t5-b
 PHASE3_CONFIDENCE_THRESHOLD = 0.93
 
 # =========================
-# UTILS
+# UTILS (Atualizado)
 # =========================
-
 def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 def now():
-    return datetime.utcnow().isoformat()
+    """Retorna timestamp ISO-8601 UTC-aware, compatível com Python 3.13+"""
+    return datetime.now(timezone.utc).isoformat()  # <--- Correção canônica
 
 def compute_notion_fingerprint() -> str:
     if not st.session_state.notioncache:
