@@ -506,7 +506,7 @@ else:
 # =========================
 
 with st.expander("🔍 Debug técnico"):
-    st.json(result.get("debug", {}))
+    st.json(result.get("identity", {}).get("debug", {}))
 
 
 # =========================
