@@ -121,6 +121,7 @@ PHASE3_CONFIDENCE_THRESHOLD = 0.93
 # =========================
 # UTILS (Atualizado)
 # =========================
+
 def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -140,6 +141,50 @@ def upsert_decision_log(identity_hash: str, decision: dict):
             st.session_state.decision_log[i] = decision
             return
     st.session_state.decision_log.append(decision)
+
+def hydrate_session_state(snapshot: dict):
+    """
+    Restaura o estado do app a partir de um snapshot canônico.
+    """
+
+    # =========================
+    # Phase 2 — Fonte de verdade
+    # =========================
+    if "phase_2_cache" in snapshot:
+        st.session_state.notioncache = snapshot["phase_2_cache"]
+        st.session_state.notioncache_loaded = True
+        st.session_state.notion_fingerprint = compute_notion_fingerprint()
+    else:
+        st.session_state.notioncache = {}
+        st.session_state.notioncache_loaded = False
+        st.session_state.notion_fingerprint = None
+
+    # =========================
+    # Phase 3 — Cache FOUND only
+    # =========================
+    if "phase_3_cache" in snapshot:
+        st.session_state.matchcache = snapshot["phase_3_cache"]
+    else:
+        st.session_state.matchcache = {}
+
+    # =========================
+    # Log canônico (auditável)
+    # =========================
+    if "canonical_log" in snapshot:
+        st.session_state.decision_log = snapshot["canonical_log"]
+    else:
+        st.session_state.decision_log = []
+
+    # =========================
+    # Nunca restaurado por snapshot
+    # =========================
+    st.session_state.notfoundcache = {}
+
+    # =========================
+    # Flag de controle
+    # =========================
+    st.session_state.snapshot_loaded = True
+
 
 # =========================
 # IDENTITY HASH CANÔNICO
@@ -163,14 +208,14 @@ def load_notioncache(data: dict):
     if "pages" not in data or not isinstance(data["pages"], dict):
         raise ValueError("Schema inválido: 'pages' ausente ou inválido")
 
+    # Phase 2 — fonte canônica
     st.session_state.notioncache = data
-    st.session_state.matchcache = data.get("matchcache", {})
-    st.session_state.notfoundcache = data.get("notfoundcache", {})
-    st.session_state.decision_log = data.get("decision_log", [])
-
-    st.session_state.notion_fingerprint = compute_notion_fingerprint()
     st.session_state.notioncache_loaded = True
+    st.session_state.notion_fingerprint = compute_notion_fingerprint()
+
+    # Reset apenas da análise corrente
     st.session_state.analysis_result = None
+
 
 # =========================
 # SNAPSHOT (CANÔNICO)
@@ -334,7 +379,11 @@ st.title("TS4 Mod Analyzer — Phase 3")
 st.caption("Determinístico · Auditável · Zero achismo")
 
 persisted = get_persisted_notioncache()
-if persisted and not st.session_state.notioncache_loaded:
+if (
+    persisted
+    and not st.session_state.snapshot_loaded
+    and not st.session_state.notioncache_loaded
+):
     load_notioncache(persisted)
 
 # =========================
