@@ -355,6 +355,7 @@ def log_ai_event(stage, payload, result):
         "result": result,
     })
 
+
 # =========================
 # UI — HEADER
 # =========================
@@ -369,6 +370,27 @@ if (
     and not st.session_state.notioncache_loaded
 ):
     load_notioncache(persisted)
+
+
+# =========================
+# FOOTER (GLOBAL · ESTRUTURAL)
+# =========================
+
+def render_footer():
+    st.markdown(
+        """
+        <div style="text-align:center;padding:1rem 0;font-size:0.85rem;color:#6b7280;">
+            <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
+                 style="height:20px;vertical-align:middle;margin-right:6px;">
+            Criado por Akin (@UnpaidSimmer)
+            <div style="font-size:0.7rem;opacity:0.6;">v3.5.7.2 · Phase 3</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+render_footer()  # 👈 ESSENCIAL
+
 
 # =========================
 # UI — SIDEBAR
@@ -559,19 +581,3 @@ with st.expander("🔍 Debug técnico"):
     st.markdown(f"**{result.get('reason')}**")
     st.json(result.get("identity", {}).get("debug", {}))
 
-
-# =========================
-# FOOTER (CANÔNICO — PRESERVADO)
-# =========================
-
-st.markdown(
-    """
-    <div style="text-align:center;padding:1rem 0;font-size:0.85rem;color:#6b7280;">
-        <img src="https://64.media.tumblr.com/05d22b63711d2c391482d6faad367ccb/675ea15a79446393-0d/s2048x3072/cc918dd94012fe16170f2526549f3a0b19ecbcf9.png"
-             style="height:20px;vertical-align:middle;margin-right:6px;">
-        Criado por Akin (@UnpaidSimmer)
-        <div style="font-size:0.7rem;opacity:0.6;">v3.5.7.2 · Phase 3</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
