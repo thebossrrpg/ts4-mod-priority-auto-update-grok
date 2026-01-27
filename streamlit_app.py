@@ -477,12 +477,10 @@ decision = result.get("decision")
 if decision == "FOUND":
     st.success("✅ Mod encontrado no Notion")
     st.markdown(f"[🔗 Abrir no Notion]({result.get('notion_url')})")
-    st.caption(result.get("reason"))
-
+    
 elif decision == "NOT_FOUND":
     st.info("ℹ️ Nenhuma entrada correspondente encontrada")
-    st.caption(result.get("reason"))
-
+    
 else:
     st.warning("⚠️ Estado de decisão inválido")
 
@@ -492,6 +490,7 @@ else:
 # =========================
 
 with st.expander("🔍 Debug técnico"):
+    st.markdown(f"**{result.get('reason')}**")
     st.json(result.get("identity", {}).get("debug", {}))
 
 
