@@ -1,22 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.7.2 — Snapshot Import UI Separation (patched)
-#
-# Contract:
-# - Phase 1 preserved (identity extraction from URL + HTML)
-# - Phase 2 preserved (deterministic Notion match via notioncache)
-# - Phase 3 preserved (IA as last resort, produces SIGNALS only)
-# - Post-Phase 3:
-#   • Interprets IA signals deterministically
-#   • Produces FINAL decision (FOUND / NOT_FOUND)
-#
-# Patch scope (additive):
-# - Introduces dedicated Snapshot import UI
-# - Separates Snapshot import from notioncache import
-# - Snapshot:
-#   • Hydrated via hydrate_session_state(snapshot)
-#   • Marked with explicit session flag (snapshot_loaded)
-# - Notioncache importer unchanged and isolated to Phase 2
+# Version: v3.5.7.2 — Closed
 #
 # ADDITIVE ONLY — Contract preserved
 # ============================================================
