@@ -8,7 +8,6 @@
 # - Phase 3: IA as SIGNAL only (never decides)
 # - Phase 4: Priority classification (AUTO / MANUAL)
 #
-# ADDITIVE ONLY — Contract preserved
 # ============================================================
 
 
