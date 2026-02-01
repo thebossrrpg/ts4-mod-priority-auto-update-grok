@@ -282,8 +282,10 @@ if persisted and not st.session_state.snapshot_loaded and not st.session_state.n
 # FOOTER
 # =========================
 def render_footer():
-    # Certifique-se de substituir a URL da imagem se tiver uma
-    img_tag = '<img src="https://raw.githubusercontent.com/thebossrrpg/ts4-mod-priority-auto-update/main/assets/logo_small.png" alt="Logo">' 
+    img_tag = (
+        '<img src="https://github.com/thebossrrpg/ts4-mod-priority-auto-update-app/'
+        'raw/phase-3-hugging-face/assets/logo_unpaidsimmer.png" alt="Logo">'
+    )
     st.markdown(
         f"""
         <div class="global-footer">
@@ -293,7 +295,7 @@ def render_footer():
         """,
         unsafe_allow_html=True,
     )
-render_footer()
+
 
 # =========================
 # SIDEBAR
