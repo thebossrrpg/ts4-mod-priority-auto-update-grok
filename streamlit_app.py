@@ -612,3 +612,4 @@ else:
 with st.expander("🔍 Debug técnico"):
     st.markdown(f"**{result.get('reason')}**")
     st.json(result.get("identity", {}).get("debug", {}))
+
