@@ -1,6 +1,6 @@
 # ============================================================
 # TS4 Mod Analyzer — Phase 1 → Phase 3 (Hugging Face IA)
-# Version: v3.5.7.2 — Closed
+# Version: v3.5.7.5
 #
 # ADDITIVE ONLY — Contract preserved
 # Phase 3 enabled as real fallback
@@ -305,7 +305,11 @@ def normalize_name(raw: str) -> str:
 def analyze_url(url: str) -> dict:
     html = fetch_page(url)
     raw = extract_identity(html, url)
-    raw_name = raw["page_title"] or raw["og_title"] or raw["url_slug"]
+    if raw["is_blocked"]:
+        raw_name = raw["url_slug"]
+    else:
+        raw_name = raw["page_title"] or raw["og_title"] or raw["url_slug"]
+
 
     return {
         "url": url,
@@ -314,76 +318,79 @@ def analyze_url(url: str) -> dict:
     }
 
 # =========================
-# PHASE 2 — MATCH VIA NOTIONCACHE
+# PHASE 2 — determinística
 # =========================
+if len(candidates) == 1:
+    matched = candidates[0]
 
-def search_notioncache_candidates(mod_name: str, url: str) -> list:
-    candidates = []
-    pages = st.session_state.notioncache.get("pages", {})
+    notion_id = matched.get("id") or matched.get("notion_id")
+    notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}" if notion_id else None
 
-    for page in pages.values():
-        if page.get("url") == url:
-            candidates.append(page)
-
-    normalized = mod_name.lower()
-    for page in pages.values():
-        if normalized in page.get("filename", "").lower():
-            candidates.append(page)
-
-    return list({c["notion_id"]: c for c in candidates}.values())[:35]
-# =========================
-# PHASE 3 — IA (SINAL · FALLBACK REAL)
-# =========================
-
-def slug_quality(slug: str) -> str:
-    return "poor" if not slug or len(slug.split()) <= 2 else "good"
-
-def build_ai_payload(identity, candidates):
-    return {
-        "identity": {
-            "title": identity["mod_name"],
-            "domain": identity["debug"]["domain"],
-            "slug": identity["debug"]["url_slug"],
-            "page_blocked": identity["debug"]["is_blocked"],
-        },
-        "candidates": [
-            {"notion_id": c["notion_id"], "title": c["filename"]}
-            for c in candidates
-        ],
-    }
-
-def call_primary_model(payload):
-    prompt = f"""
-Compare the mod identity with the candidates.
-
-Rules:
-- Return JSON only
-- match=true only if EXACTLY ONE clear match exists
-- Include confidence (0–1)
-- Do not guess
-
-Payload:
-{json.dumps(payload, ensure_ascii=False)}
-"""
-    r = requests.post(
-        HF_PRIMARY_MODEL,
-        headers=HF_HEADERS,
-        json={"inputs": prompt, "parameters": {"temperature": 0}},
+    display_name = (
+        matched.get("title")
+        or matched.get("filename")
     )
-    try:
-        data = r.json()
-        text = data[0].get("generated_text") if isinstance(data, list) else data.get("generated_text")
-        return json.loads(text) if text else None
-    except Exception:
-        return None
 
-def log_ai_event(stage, payload, result):
-    st.session_state.ai_logs.append({
-        "timestamp": now(),
-        "stage": stage,
-        "payload": payload,
-        "result": result,
+    decision.update({
+        "decision": "FOUND",
+        "reason": "Deterministic match (Phase 2)",
+        "notion_id": notion_id,
+        "notion_url": notion_url,
+        "display_name": display_name,
     })
+
+    st.session_state.matchcache[identity_hash] = decision
+
+# =========================
+# PHASE 3 — fallback real (engenharia)
+# =========================
+else:
+    payload = build_ai_payload(identity, candidates)
+
+    ai_result = call_primary_model(payload)
+
+    # LOG SEMPRE (sucesso ou erro)
+    log_ai_event("PHASE_3_FALLBACK", payload, ai_result)
+
+    # --- erro técnico explícito ---
+    if isinstance(ai_result, dict) and ai_result.get("error"):
+        decision.update({
+            "decision": "NOT_FOUND",
+            "reason": "PHASE_3_ERROR",
+            "phase_3_error": ai_result
+        })
+
+        st.session_state.notfoundcache[identity_hash] = decision
+
+    # --- match válido ---
+    elif (
+        ai_result
+        and ai_result.get("match") is True
+        and ai_result.get("confidence", 0) >= PHASE3_CONFIDENCE_THRESHOLD
+    ):
+        notion_id = ai_result.get("notion_id")
+        notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}" if notion_id else None
+
+        decision.update({
+            "decision": "FOUND",
+            "reason": "AI fallback match (Phase 3)",
+            "notion_id": notion_id,
+            "notion_url": notion_url,
+            "display_name": ai_result.get("title"),
+            "phase_3_confidence": ai_result.get("confidence")
+        })
+
+        st.session_state.matchcache[identity_hash] = decision
+
+    # --- no match ---
+    else:
+        decision.update({
+            "decision": "NOT_FOUND",
+            "reason": "AI fallback no match (Phase 3)",
+            "phase_3_raw": ai_result
+        })
+
+        st.session_state.notfoundcache[identity_hash] = decision
 
 
 # =========================
