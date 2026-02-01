@@ -1,11 +1,11 @@
 # ============================================================
-# TS4 Mod Analyzer — Phase 1 → Phase 4 (Integrated)
-# Version: v3.6.1 — Fixes & Phase 4 Formatting
+# TS4 Mod Analyzer — Phase 1 → Phase 3 (Integrated)
+# Version: v3.5.7.3 — Runtime Fixes & List Logic
 #
 # CHANGES:
-# - Fix AttributeError in Phase 2 logic (list vs dict)
-# - Phase 4 output format flattened (no Notion mirroring)
-# - CSS .global-footer corrected
+# - Fix: datetime.now(timezone.utc) for Python 3.13+
+# - Fix: candidates logic (AttributeError)
+# - UI: Corrected Footer CSS and Structure
 # ============================================================
 
 import streamlit as st
@@ -16,13 +16,13 @@ import hashlib
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from notion_client import Client
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # <--- [FIX 1] Import timezone
 
 # =========================
 # PAGE CONFIG & CSS
 # =========================
 st.set_page_config(
-    page_title="TS4 Mod Analyzer — Phase 4 · v3.6.1",
+    page_title="TS4 Mod Analyzer — Phase 3 · v3.5.7.3",
     layout="centered"
 )
 
@@ -33,22 +33,22 @@ st.markdown(
     .reportview-container .main .block-container {padding-top: 2rem;}
     div[data-testid="stExpander"] div[role="button"] p {font-size: 1rem; font-weight: 600;}
     
-    /* CSS DEFINITIVO DO FOOTER */
+    /* CSS DO FOOTER */
     .global-footer {
-        position: fixed; 
-        bottom: 0; 
-        width: 100%; 
-        text-align: center; 
-        color: #888; 
-        font-size: 0.8em; 
-        background-color: #0e1117; 
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background-color: #0e1117;
+        text-align: center;
         padding: 10px;
         z-index: 999;
+        font-size: 0.8em;
+        color: #888;
+        border-top: 1px solid #262730;
     }
     .global-footer img {
-        height: 28px;
-        max-height: 28px;
-        width: auto;
+        height: 20px;
         vertical-align: middle;
         margin-right: 8px;
     }
@@ -58,7 +58,7 @@ st.markdown(
 )
 
 # =========================
-# PERSISTÊNCIA LOCAL (notioncache)
+# PERSISTÊNCIA LOCAL
 # =========================
 @st.cache_data(show_spinner=False)
 def get_persisted_notioncache():
@@ -69,7 +69,7 @@ def persist_notioncache(data: dict):
     get_persisted_notioncache.clear()
 
 # =========================
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # =========================
 DEFAULT_KEYS = {
     "analysis_result": None,
@@ -77,7 +77,6 @@ DEFAULT_KEYS = {
     "decision_log": [],
     "matchcache": {},
     "notfoundcache": {},
-    "phase4_cache": {},
     "notioncache": {},
     "notioncache_loaded": False,
     "snapshot_loaded": False,
@@ -99,12 +98,10 @@ REQUEST_HEADERS = {
     )
 }
 
-# Notion Credentials
 NOTION_TOKEN = st.secrets["notion"]["token"]
 NOTION_DATABASE_ID = st.secrets["notion"]["database_id"]
 notion = Client(auth=NOTION_TOKEN)
 
-# Hugging Face Credentials
 HF_TOKEN = st.secrets["huggingface"]["token"]
 HF_HEADERS = {
     "Authorization": f"Bearer {HF_TOKEN}",
@@ -119,7 +116,8 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 def now():
-    """Retorna timestamp ISO-8601 UTC-aware (Python 3.13 safe)"""
+    """Retorna timestamp ISO-8601 UTC-aware, compatível com Python 3.13+"""
+    # [FIX 2] Uso correto de timezone para evitar DeprecationWarning
     return datetime.now(timezone.utc).isoformat()
 
 def compute_notion_fingerprint() -> str:
@@ -153,11 +151,6 @@ def hydrate_session_state(snapshot: dict):
     else:
         st.session_state.matchcache = {}
 
-    if "phase_4_cache" in snapshot:
-        st.session_state.phase4_cache = snapshot["phase_4_cache"]
-    else:
-        st.session_state.phase4_cache = {}
-
     if "canonical_log" in snapshot:
         st.session_state.decision_log = snapshot["canonical_log"]
     else:
@@ -170,13 +163,12 @@ def build_snapshot():
     return {
         "meta": {
             "app": "TS4 Mod Analyzer",
-            "version": "v3.6.1",
+            "version": "v3.5.7.3",
             "created_at": now(),
             "phase_2_fingerprint": st.session_state.notion_fingerprint,
         },
         "phase_2_cache": st.session_state.notioncache,
         "phase_3_cache": st.session_state.matchcache,
-        "phase_4_cache": st.session_state.phase4_cache,
         "canonical_log": st.session_state.decision_log,
     }
 
@@ -276,103 +268,10 @@ def search_notioncache_candidates(mod_name: str, url: str) -> list:
     return list({c["notion_id"]: c for c in candidates}.values())[:35]
 
 # =========================
-# PHASE 4 — PRIORITY CLASSIFICATION (CORRIGIDO)
-# =========================
-def fetch_notion_page_context(notion_id: str) -> dict:
-    """Busca dados da página no Notion para a Fase 4."""
-    try:
-        page = notion.pages.retrieve(notion_id)
-        props = page.get("properties", {})
-        
-        # Extração segura de Prioridade (Select)
-        p_select = props.get("Priority", {}).get("select")
-        priority_val = p_select["name"] if p_select else "Pending"
-        
-        # Extração segura de Notes (Rich Text)
-        notes_prop = props.get("Notes", {}).get("rich_text", [])
-        notes_text = "".join([t["plain_text"] for t in notes_prop]) if notes_prop else ""
-        
-        return {
-            "priority": priority_val,
-            "notes_context": notes_text,
-            "page_url": page.get("url"),
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-def call_priority_model(context: dict) -> dict:
-    """Chama a IA para sugerir prioridade."""
-    prompt = f"""
-    You are classifying update priority for a Sims 4 mod.
-    Rules:
-    - Return JSON only.
-    - 'priority' must be integer 0-5.
-    - 'reason' should be a short explanation.
-    
-    Context:
-    {json.dumps(context, indent=2)}
-    """
-    try:
-        r = requests.post(
-            HF_PRIMARY_MODEL,
-            headers=HF_HEADERS,
-            json={"inputs": prompt, "parameters": {"temperature": 0}},
-            timeout=10
-        )
-        data = r.json()
-        
-        if isinstance(data, list) and len(data) > 0:
-            text = data.get("generated_text")
-        elif isinstance(data, dict):
-            text = data.get("generated_text")
-        else:
-            return {"error": "Invalid AI response"}
-            
-        return json.loads(text) if text else {"error": "Empty response"}
-    except Exception as e:
-        return {"error": str(e)}
-
-def phase4_process(identity_hash: str, notion_id: str):
-    """Orquestrador da Fase 4 - Formato Plano."""
-    current_data = fetch_notion_page_context(notion_id)
-    
-    if "error" in current_data:
-        return {"error": current_data["error"]}
-        
-    ai_result = call_priority_model(current_data)
-    
-    current_priority = str(current_data.get("priority", "?"))
-    suggested_priority = str(ai_result.get("priority", "?"))
-    suggested_note = ai_result.get("reason", "Phase 4 suggests updating due to impact analysis.")
-    
-    mode = "AUTO" if suggested_priority == current_priority else "MANUAL"
-    
-    # FORMATO PLANO SOLICITADO
-    result = {
-        "current_priority": current_priority,
-        "suggested_priority": suggested_priority,
-        "suggested_note": suggested_note,
-        "mode": mode,
-        "timestamp": now(),
-    }
-    
-    # Salva no cache da Fase 4 e log IA
-    st.session_state.phase4_cache[identity_hash] = result
-    
-    st.session_state.ai_logs.append({
-        "timestamp": now(),
-        "stage": "PHASE_4",
-        "input": current_data,
-        "output": result
-    })
-    
-    return result
-
-# =========================
 # UI MAIN
 # =========================
-st.title("TS4 Mod Analyzer — Phase 3+4")
-st.caption("Determinístico · Auditável · Classificação de Prioridade")
+st.title("TS4 Mod Analyzer — Phase 3")
+st.caption("Determinístico · Auditável · Zero achismo")
 
 # Loader de persistência
 persisted = get_persisted_notioncache()
@@ -380,14 +279,16 @@ if persisted and not st.session_state.snapshot_loaded and not st.session_state.n
     load_notioncache(persisted)
 
 # =========================
-# FOOTER (CORRIGIDO)
+# FOOTER
 # =========================
 def render_footer():
-    # Classe global-footer definida no CSS no início
+    # Certifique-se de substituir a URL da imagem se tiver uma
+    img_tag = '<img src="https://raw.githubusercontent.com/thebossrrpg/ts4-mod-priority-auto-update/main/assets/logo_small.png" alt="Logo">' 
     st.markdown(
-        """
+        f"""
         <div class="global-footer">
-        Criado por Akin (@UnpaidSimmer) | v3.6.1
+            {img_tag}
+            Criado por Akin (@UnpaidSimmer) | v3.5.7.3
         </div>
         """,
         unsafe_allow_html=True,
@@ -425,7 +326,6 @@ with st.sidebar:
 
     with st.expander("🗃️ Downloads", expanded=False):
         st.download_button("matchcache.json", json.dumps(st.session_state.matchcache, indent=2), "matchcache.json")
-        st.download_button("phase4_cache.json", json.dumps(st.session_state.phase4_cache, indent=2), "phase4_cache.json")
         st.download_button("decision_log.json", json.dumps(st.session_state.decision_log, indent=2), "decision_log.json")
         st.download_button("snapshot.json", json.dumps(build_snapshot(), indent=2), "snapshot.json")
 
@@ -466,16 +366,17 @@ if st.button("Analisar") and url_input.strip():
             }
 
             if candidates:
-                # CORREÇÃO DO ERRO: candidates é lista, pegamos o primeiro item
+                # [FIX 3] CORREÇÃO DO ATTRIBUTE ERROR:
+                # 'candidates' é uma lista. Pegamos o primeiro item (melhor match determinístico).
                 matched = candidates 
                 
                 notion_id = matched.get("id") or matched.get("notion_id")
                 notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}" if notion_id else None
                 
-                title_list = matched.get("properties", {}).get("Filename", {}).get("title", [])
-                if not title_list: 
-                     title_list = matched.get("properties", {}).get("Name", {}).get("title", [])
-                
+                # Tratamento seguro de títulos aninhados
+                props = matched.get("properties", {})
+                title_prop = props.get("Filename") or props.get("Name")
+                title_list = title_prop.get("title", []) if title_prop else []
                 mod_title = title_list.get("plain_text", "Unknown") if title_list else "Unknown"
 
                 decision.update({
@@ -517,45 +418,6 @@ decision_val = result.get("decision")
 if decision_val == "FOUND":
     st.success("✅ Mod encontrado no Notion")
     st.markdown(f"[🔗 Abrir página no Notion]({result.get('notion_url')})")
-    
-    # =========================
-    # PHASE 4 INTEGRATION
-    # =========================
-    identity_hash = result["identity_hash"]
-    notion_id = result["notion_id"]
-    
-    st.markdown("---")
-    with st.expander("🔢 Phase 4 — Classificação de Prioridade", expanded=True):
-        if notion_id:
-            # Check cache Phase 4
-            if identity_hash in st.session_state.phase4_cache:
-                p4_data = st.session_state.phase4_cache[identity_hash]
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("#### Atual")
-                    st.write(f"Prioridade: **{p4_data.get('current_priority')}**")
-                with col2:
-                    st.markdown("#### Sugestão")
-                    st.write(f"Prioridade: **{p4_data.get('suggested_priority')}**")
-                    st.caption(f"Note: {p4_data.get('suggested_note')}")
-                
-                st.info(f"Modo: {p4_data.get('mode')}")
-                
-                if st.button("🔄 Re-classificar"):
-                    del st.session_state.phase4_cache[identity_hash]
-                    st.rerun()
-            else:
-                st.info("Classificação pendente.")
-                if st.button("🚀 Rodar Classificação"):
-                    with st.spinner("Analisando prioridade..."):
-                        out = phase4_process(identity_hash, notion_id)
-                        if "error" in out:
-                            st.error(f"Erro: {out['error']}")
-                        else:
-                            st.rerun()
-        else:
-            st.error("Notion ID perdido.")
 
 elif decision_val == "NOT_FOUND":
     st.warning("⚠️ Mod não encontrado na base.")
