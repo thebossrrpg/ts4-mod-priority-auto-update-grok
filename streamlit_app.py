@@ -318,6 +318,24 @@ def analyze_url(url: str) -> dict:
     }
 
 # =========================
+# PHASE 2 — preparação de candidatos
+# =========================
+candidates = []
+
+for page in notioncache.get("pages", {}).values():
+    title = (page.get("title") or "").lower()
+    filename = (page.get("filename") or "").lower()
+    url = (page.get("url") or "").lower()
+
+    # matching determinístico básico
+    if identity["slug"] and identity["slug"] in url:
+        candidates.append(page)
+    elif identity["title"] and identity["title"].lower() == title:
+        candidates.append(page)
+    elif identity["filename"] and identity["filename"].lower() == filename:
+        candidates.append(page)
+
+# =========================
 # PHASE 2 — determinística
 # =========================
 if len(candidates) == 1:
@@ -340,6 +358,7 @@ if len(candidates) == 1:
     })
 
     st.session_state.matchcache[identity_hash] = decision
+
 
 # =========================
 # PHASE 3 — fallback real (engenharia)
