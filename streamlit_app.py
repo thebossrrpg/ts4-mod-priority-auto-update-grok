@@ -318,95 +318,59 @@ def analyze_url(url: str) -> dict:
     }
 
 # =========================
-# PHASE 2 — preparação de candidatos
-# =========================
-candidates = []
-
-for page in notioncache.get("pages", {}).values():
-    title = (page.get("title") or "").lower()
-    filename = (page.get("filename") or "").lower()
-    url = (page.get("url") or "").lower()
-
-    # matching determinístico básico
-    if identity["slug"] and identity["slug"] in url:
-        candidates.append(page)
-    elif identity["title"] and identity["title"].lower() == title:
-        candidates.append(page)
-    elif identity["filename"] and identity["filename"].lower() == filename:
-        candidates.append(page)
-
-# =========================
-# PHASE 2 — determinística
+# PHASE 2 — busca determinística mínima
 # =========================
 
-candidates = []
+def search_notioncache_candidates(mod_name: str, url: str) -> list:
+    candidates = []
+    pages = st.session_state.notioncache.get("pages", {})
 
-pages = st.session_state.notioncache.get("pages", {})
+    mod_name_l = (mod_name or "").lower()
+    url_l = (url or "").lower()
 
-for page in pages.values():
-    # Match por URL exata
-    if page.get("url") == identity["url"]:
-        candidates.append(page)
-        continue
+    for page in pages.values():
+        page_url = (page.get("url") or "").lower()
+        filename = (page.get("filename") or "").lower()
+        title = (page.get("title") or "").lower()
 
-    # Match por nome no filename
-    filename = (page.get("filename") or "").lower()
-    if identity["mod_name"].lower() in filename:
-        candidates.append(page)
+        if page_url and page_url == url_l:
+            candidates.append(page)
+        elif mod_name_l and mod_name_l in filename:
+            candidates.append(page)
+        elif mod_name_l and mod_name_l == title:
+            candidates.append(page)
 
-# Deduplicação por notion_id
-candidates = list({c["notion_id"]: c for c in candidates}.values())
+    # dedupe por notion_id
+    return list({c.get("notion_id") or c.get("id"): c for c in candidates}.values())
 
 # =========================
-# PHASE 3 — fallback real (engenharia)
+# PHASE 3 — IA (stubs canônicos)
 # =========================
-else:
-    payload = build_ai_payload(identity, candidates)
 
-    ai_result = call_primary_model(payload)
+def build_ai_payload(identity: dict, candidates: list) -> dict:
+    return {
+        "identity": identity,
+        "candidates": candidates,
+    }
 
-    # LOG SEMPRE (sucesso ou erro)
-    log_ai_event("PHASE_3_FALLBACK", payload, ai_result)
 
-    # --- erro técnico explícito ---
-    if isinstance(ai_result, dict) and ai_result.get("error"):
-        decision.update({
-            "decision": "NOT_FOUND",
-            "reason": "PHASE_3_ERROR",
-            "phase_3_error": ai_result
-        })
+def call_primary_model(payload: dict) -> dict:
+    # stub técnico: simula falha segura
+    return {
+        "match": False,
+        "confidence": 0.0,
+        "reason": "STUB_NO_MODEL"
+    }
 
-        st.session_state.notfoundcache[identity_hash] = decision
 
-    # --- match válido ---
-    elif (
-        ai_result
-        and ai_result.get("match") is True
-        and ai_result.get("confidence", 0) >= PHASE3_CONFIDENCE_THRESHOLD
-    ):
-        notion_id = ai_result.get("notion_id")
-        notion_url = f"https://www.notion.so/{notion_id.replace('-', '')}" if notion_id else None
+def log_ai_event(stage: str, payload: dict, result: dict):
+    st.session_state.ai_logs.append({
+        "timestamp": now(),
+        "stage": stage,
+        "payload": payload,
+        "result": result,
+    })
 
-        decision.update({
-            "decision": "FOUND",
-            "reason": "AI fallback match (Phase 3)",
-            "notion_id": notion_id,
-            "notion_url": notion_url,
-            "display_name": ai_result.get("title"),
-            "phase_3_confidence": ai_result.get("confidence")
-        })
-
-        st.session_state.matchcache[identity_hash] = decision
-
-    # --- no match ---
-    else:
-        decision.update({
-            "decision": "NOT_FOUND",
-            "reason": "AI fallback no match (Phase 3)",
-            "phase_3_raw": ai_result
-        })
-
-        st.session_state.notfoundcache[identity_hash] = decision
 
 
 # =========================
