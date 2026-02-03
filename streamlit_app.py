@@ -506,16 +506,20 @@ if st.button("Analisar") and url_input.strip():
             "identity": identity,
             "notion_fingerprint": fp,
             "phase_2_candidates": len(candidates),
+            "phases_executed": [],
             "decision": None,
             "reason": None,
             "notion_id": None,
             "notion_url": None,
         }
 
+
         # =========================
         # PHASE 2 — determinística
         # =========================
         if len(candidates) == 1:
+            decision["phases_executed"].append("PHASE_2")
+
             matched = candidates[0]
 
             notion_id = matched.get("id") or matched.get("notion_id")
@@ -540,8 +544,11 @@ if st.button("Analisar") and url_input.strip():
         # PHASE 3 — fallback real
         # =========================
         else:
+            decision["phases_executed"].append("PHASE_3")
+
             payload = build_ai_payload(identity, candidates)
             ai_result = call_primary_model(payload)
+
 
             log_ai_event("PHASE_3_FALLBACK", payload, ai_result)
 
@@ -624,5 +631,14 @@ else:
 # =========================
 
 with st.expander("🔍 Debug técnico"):
-    st.markdown(f"**{result.get('reason')}**")
+    st.markdown(f"**Resultado:** {result.get('decision')}")
+    st.markdown(f"**Motivo:** {result.get('reason')}")
+
+    st.markdown("**Fases executadas:**")
+    st.json(result.get("phases_executed", []))
+
+    st.markdown("**Candidatos Phase 2:**")
+    st.json(result.get("phase_2_candidates"))
+
+    st.markdown("**Debug de identidade (Phase 1):**")
     st.json(result.get("identity", {}).get("debug", {}))
