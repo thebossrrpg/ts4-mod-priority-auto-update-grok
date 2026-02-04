@@ -383,14 +383,25 @@ def log_ai_event(stage: str, payload: dict, result: dict):
 st.title("TS4 Mod Analyzer — Phase 3")
 st.caption("Determinístico · Auditável · Zero achismo")
 
-persisted = get_persisted_notioncache()
+# =========================
+# AUTO-RESTORE CANÔNICO (Snapshot first)
+# =========================
+
 if (
-    persisted
-    and not st.session_state.snapshot_loaded
+    not st.session_state.snapshot_loaded
     and not st.session_state.notioncache_loaded
 ):
-    load_notioncache(persisted)
+    persisted = get_persisted_notioncache()
 
+    if persisted:
+        try:
+            # persisted snapshot SEMPRE representa Phase 2 válida
+            st.session_state.notioncache = persisted
+            st.session_state.notioncache_loaded = True
+            st.session_state.notion_fingerprint = compute_notion_fingerprint()
+        except Exception:
+            # falha silenciosa → usuário importa manualmente
+            pass
 
 # =========================
 # FOOTER (GLOBAL · ESTRUTURAL)
