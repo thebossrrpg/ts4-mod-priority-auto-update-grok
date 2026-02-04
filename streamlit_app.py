@@ -366,13 +366,19 @@ def call_primary_model(payload: dict) -> dict:
     }
 
 
-def log_ai_event(stage: str, payload: dict, result: dict):
-    st.session_state.ai_logs.append({
-        "timestamp": now(),
-        "stage": stage,
-        "payload": payload,
-        "result": result,
-    })
+ai_event = {
+    "timestamp": now(),
+    "stage": "PHASE_3_FALLBACK",
+    "payload": payload,
+    "result": ai_result,
+}
+
+# Log global (sessão)
+st.session_state.ai_logs.append(ai_event)
+
+# Log acoplado à decisão (canônico)
+decision["ai_log"] = ai_event
+
 
 
 
