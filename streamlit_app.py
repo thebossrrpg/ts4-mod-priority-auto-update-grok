@@ -546,39 +546,45 @@ if st.button("Analisar") and url_input.strip():
             "notion_url": None,
         }
 
-        # =========================
-        # PHASE 2 — determinística
-        # =========================
-        if len(candidates) == 1:
-            decision["phases_executed"].append("PHASE_2")
+    # =========================
+# PHASE 2 — determinística
+# =========================
+if len(candidates) == 1:
+    decision["phases_executed"].append("PHASE_2")
 
-            matched = candidates[0]
-            notion_id = matched.get("id") or matched.get("notion_id")
-            notion_url = (
-                f"https://www.notion.so/{notion_id.replace('-', '')}"
-                if notion_id else None
-            )
+    matched = candidates[0]
 
-            decision.update({
-                "decision": "FOUND",
-                "reason": "Deterministic match (Phase 2)",
-                "notion_id": notion_id,
-                "notion_url": notion_url,
-                "display_name": matched.get("title") or matched.get("filename"),
-            })
+    notion_id = matched.get("id") or matched.get("notion_id")
+    notion_url = (
+        f"https://www.notion.so/{notion_id.replace('-', '')}"
+        if notion_id else None
+    )
 
-            st.session_state.matchcache[identity_hash] = decision
+    display_name = (
+        matched.get("title")
+        or matched.get("filename")
+    )
 
-        # =========================
-        # PHASE 3 — fallback real
-        # =========================
-    else:
+    decision.update({
+        "decision": "FOUND",
+        "reason": "Deterministic match (Phase 2)",
+        "notion_id": notion_id,
+        "notion_url": notion_url,
+        "display_name": display_name,
+    })
+
+    st.session_state.matchcache[identity_hash] = decision
+
+# =========================
+# PHASE 3 — fallback real
+# =========================
+else:
     decision["phases_executed"].append("PHASE_3")
 
     payload = build_ai_payload(identity, candidates)
     ai_result = call_primary_model(payload)
 
-    # 🔒 LOG TÉCNICO OBRIGATÓRIO
+    # 🔒 LOG TÉCNICO OBRIGATÓRIO (sempre que Phase 3 roda)
     log_ai_event(
         stage="PHASE_3_FALLBACK",
         payload={
@@ -618,8 +624,6 @@ if st.button("Analisar") and url_input.strip():
         })
 
         st.session_state.notfoundcache[identity_hash] = decision
-
-
 
 # =========================
 # UI — RESULTADO (CANÔNICO · RECONSTRUÍDO)
