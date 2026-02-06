@@ -182,7 +182,7 @@ def build_identity_hash(identity: dict) -> str:
 # SNAPSHOT
 # =========================
 
-def def build_snapshot():
+def build_snapshot():
     return {
         "meta": {
             "app": "TS4 Mod Analyzer",
